@@ -127,8 +127,26 @@ setup_sudo() {
 	if [ "$(id -u)" -eq 0 ]; then
 		return 0
 	fi
-	# The only password entry of the whole chain.
-	"$SUDO_BIN" -v || fail "sudo authorization failed — run this script in an interactive terminal."
+	# Pre-authenticate — the only password entry of the whole chain — then
+	# grant NOPASSWD for the rest of it:
+	#
+	# Probe first (`-n true`, a command): when credentials are already
+	# valid — this run's own drop-in from a previous stage, or an outer
+	# installer's grant — skip the authenticate step entirely; chained
+	# stages never re-prompt. Failure means no valid grant exists and
+	# `sudo -v` prompts for the one password of the run.
+	#
+	# Why the drop-in is NOPASSWD: authentication is granted by the rule
+	# itself and the timestamp is never consulted, so brew's
+	# --reset-timestamp, clock jumps and plain expiry are all harmless.
+	# GNU sudo resolves conflicting rules last-match-wins, so this drop-in
+	# (parsed after the distro's password-required rule) always wins.
+	# sudo-rs would defeat this tag for VALIDATE (max_by_key picks the
+	# password-required rule) — but every sudo in this script is a command
+	# or the probe, where NOPASSWD wins on both implementations.
+	if ! "$SUDO_BIN" -n true 2>/dev/null; then
+		"$SUDO_BIN" -v || fail "sudo authorization failed — run this script in an interactive terminal."
+	fi
 	if printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$(id -un)" |
 		"$SUDO_BIN" -n sh -c 'umask 077; cat >"$1" && chmod 0440 "$1" && visudo -c -f "$1" >/dev/null 2>&1 || { rm -f "$1"; exit 1; }' sh "$NOPASSWD_DROPIN" >/dev/null 2>&1; then
 		SUDO_NOPASSWD=1
@@ -167,15 +185,20 @@ run_component() {
 	local name="$1"
 	local url="https://raw.githubusercontent.com/QMonkey/$name/master/install.sh"
 	info "──────────────── Installing ${BOLD}$name${NC}${CYAN} ────────────────"
-	# `</dev/null` guards this script's own stdin (the piped source) from
-	# being consumed by anything the component runs; sudo prompts go to
-	# /dev/tty and never touch stdin.
+	# The pipeline gives bash a fresh stdin (the component source itself),
+	# so nothing the component runs can consume this script's own piped
+	# source.
 	if curl -fsSL "$url" | bash; then
 		ok "$name installed."
-		return 0
+	else
+		FAILED_COMPONENTS+=("$name")
+		warn "$name install failed — continuing with the remaining components."
 	fi
-	FAILED_COMPONENTS+=("$name")
-	warn "$name install failed — continuing with the remaining components."
+	# Pick up PATH changes the component made (cargo env, the Homebrew
+	# shellenv, ...) so later components inherit them. Sourcing the
+	# profile is safe despite the tmux auto-start block it may carry:
+	# that block guards on $- == *i* and this shell is non-interactive.
+	[ -f "$HOME/.profile" ] && . "$HOME/.profile" || true
 	return 0
 }
 
