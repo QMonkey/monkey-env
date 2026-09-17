@@ -3,15 +3,17 @@
 One-shot meta-installer for the monkey-* family. Chains the component installers in dependency order with a single password entry:
 
 ```text
-monkey-wezterm -> monkey-tmux -> monkey-zsh -> monkey-nvim -> monkey-vim
+monkey-zsh -> monkey-wezterm -> monkey-tmux -> monkey-nvim -> monkey-vim
 ```
+
+monkey-zsh runs first on purpose: it switches the login shell to zsh before anything else, so the env blocks the later components persist land in `~/.zprofile` (which zsh reads) instead of `.profile`.
 
 ## Install
 
 Default — install everything:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/main/install.sh | bash -s --
+curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/main/install.sh | bash
 ```
 
 Vim-style selection — only the components you ask for (order is always normalized to the sequence above):
