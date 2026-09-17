@@ -104,6 +104,16 @@ parse_args() {
 	else
 		COMPONENTS=("${ALL_COMPONENTS[@]}")
 	fi
+	local rest=() c2
+	for c2 in "${COMPONENTS[@]}"; do
+		[ "$c2" = "monkey-zsh" ] || rest+=("$c2")
+	done
+	if [[ ${#rest[@]} -lt ${#COMPONENTS[@]} ]]; then
+		# zsh first: monkey-zsh's chsh runs before the later stages, so
+		# their env blocks land in ~/.zprofile (the components query the
+		# login shell from the user database).
+		COMPONENTS=("monkey-zsh" "${rest[@]}")
+	fi
 }
 
 # ──────────────────────────── sudo setup ────────────────────────────
@@ -198,7 +208,14 @@ run_component() {
 	# shellenv, ...) so later components inherit them. Sourcing the
 	# profile is safe despite the tmux auto-start block it may carry:
 	# that block guards on $- == *i* and this shell is non-interactive.
-	[ -f "$HOME/.profile" ] && . "$HOME/.profile" || true
+	# `set +u` around the source: user profiles reference optional vars
+	# ($TMUX etc.) and this script runs with `set -u` — an unset var in
+	# the profile must not abort the chain.
+	if [ -f "$HOME/.profile" ]; then
+		set +u
+		. "$HOME/.profile"
+		set -u
+	fi
 	return 0
 }
 
