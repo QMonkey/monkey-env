@@ -5,10 +5,12 @@ set -euo pipefail
 # monkey-env one-shot meta-installer
 #
 # Chains the monkey-* component installers in dependency order:
-#   monkey-wezterm -> monkey-tmux -> monkey-zsh -> monkey-nvim -> monkey-vim
+#   monkey-zsh -> monkey-wezterm -> monkey-tmux -> monkey-nvim -> monkey-vim
+#   (monkey-zsh runs first: its chsh must precede the later stages, so
+#   their env blocks land in ~/.zprofile)
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/main/install.sh | bash -s -- [OPTIONS]
+#   curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/main/install.sh | bash
 #   bash install.sh [OPTIONS]
 #
 # NOTE: `bash --with-monkey-tmux` does NOT work — bash would parse it as
@@ -27,7 +29,8 @@ SUDOERS_D_DIR="${SUDOERS_D_DIR:-/etc/sudoers.d}"
 SUDO_NOPASSWD=0
 NOPASSWD_DROPIN="$SUDOERS_D_DIR/zz-monkey-env-nopasswd"
 
-# Canonical install order — outer environment first, editors last.
+# Canonical --with-* projection order — outer environment first, editors
+# last. At runtime monkey-zsh is hoisted to the front (see parse_args).
 ALL_COMPONENTS=(monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim)
 # Not supported yet (their installers do not exist): monkey-hyprland, monkey-sway.
 
@@ -47,7 +50,9 @@ usage() {
 Usage: $0 [OPTIONS]
 
 One-shot meta-installer for the monkey-* family. Installs the component
-configs in dependency order: wezterm -> tmux -> zsh -> nvim -> vim.
+configs in dependency order: zsh -> wezterm -> tmux -> nvim -> vim
+(monkey-zsh runs first so its login-shell switch precedes the other
+components' profile writes).
 
 OPTIONS
   --with-monkey-wezterm   Include the wezterm config
@@ -56,7 +61,7 @@ OPTIONS
   --with-monkey-nvim      Include the nvim config
   --with-monkey-vim       Include the vim config
                           Multiple --with-* flags combine; the install order
-                          is always wezterm -> tmux -> zsh -> nvim -> vim.
+                          is always zsh -> wezterm -> tmux -> nvim -> vim.
                           Without any --with-* flag, ALL of the above install.
   -h, --help              Show this help
 
@@ -249,6 +254,12 @@ print_summary() {
 
 main() {
 	parse_args "$@"
+
+	# Every component installer is fetched with curl — without it the whole
+	# chain cannot start. Fail with an actionable message instead of letting
+	# each component die with a confusing "curl: command not found".
+	have_native_cmd curl ||
+		fail "curl is required to fetch the component installers — install it first (e.g. sudo apt-get install curl), then re-run."
 
 	echo ""
 	echo -e "${BOLD}╔══════════════════════════════════════════╗${NC}"
