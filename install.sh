@@ -5,9 +5,13 @@ set -euo pipefail
 # monkey-env one-shot meta-installer
 #
 # Chains the monkey-* component installers in dependency order:
-#   monkey-zsh -> monkey-wezterm -> monkey-tmux -> monkey-nvim -> monkey-vim
-#   (monkey-zsh runs first: its chsh must precede the later stages, so
-#   their env blocks land in ~/.zprofile)
+#   monkey-zsh -> monkey-hyprland -> monkey-sway -> monkey-wezterm ->
+#   monkey-tmux -> monkey-nvim -> monkey-vim
+#   (runtime order: monkey-zsh is hoisted to the front — its chsh must
+#   precede the later stages. monkey-sway is opt-in: --with-monkey-sway.
+#   Default installs everything else, including monkey-hyprland — except
+#   on WSL/macOS, where the default drops monkey-hyprland as well;
+#   --with-monkey-hyprland overrides.)
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/main/install.sh | bash
@@ -31,10 +35,16 @@ NOPASSWD_DROPIN="$SUDOERS_D_DIR/zz-monkey-env-nopasswd"
 
 # Canonical --with-* projection order — outer environment first, editors
 # last. At runtime monkey-zsh is hoisted to the front (see parse_args).
-ALL_COMPONENTS=(monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim)
-# Not supported yet (their installers do not exist): monkey-hyprland, monkey-sway.
+ALL_COMPONENTS=(monkey-hyprland monkey-sway monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim)
+# Default selection when no --with-* flag is given: everything EXCEPT
+# monkey-sway (opt-in — a second Wayland desktop; installing both is fine,
+# the last install wins the shared ~/.config/waybar link). On platforms
+# where a Wayland desktop config is not applicable (WSL, macOS) the default
+# also drops monkey-hyprland — see parse_args.
+DEFAULT_COMPONENTS=(monkey-hyprland monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim)
 
 COMPONENTS=()
+SUCCEEDED_COMPONENTS=()
 FAILED_COMPONENTS=()
 
 info() { echo -e "${CYAN}[INFO]${NC}  $*"; }
@@ -50,19 +60,25 @@ usage() {
 Usage: $0 [OPTIONS]
 
 One-shot meta-installer for the monkey-* family. Installs the component
-configs in dependency order: zsh -> wezterm -> tmux -> nvim -> vim
-(monkey-zsh runs first so its login-shell switch precedes the other
-components' profile writes).
+configs in dependency order: hyprland -> sway -> wezterm -> tmux -> nvim ->
+vim (monkey-zsh runs first so its login-shell switch precedes the other
+components' profile writes; monkey-sway is opt-in).
 
 OPTIONS
+  --with-monkey-hyprland  Include the Hyprland desktop config
+  --with-monkey-sway      Include the sway desktop config (opt-in)
   --with-monkey-wezterm   Include the wezterm config
   --with-monkey-tmux      Include the tmux config
   --with-monkey-zsh       Include the zsh config
   --with-monkey-nvim      Include the nvim config
   --with-monkey-vim       Include the vim config
                           Multiple --with-* flags combine; the install order
-                          is always zsh -> wezterm -> tmux -> nvim -> vim.
-                          Without any --with-* flag, ALL of the above install.
+                          is always zsh first, then hyprland -> sway ->
+                          wezterm -> tmux -> nvim -> vim. Without any
+                          --with-* flag, everything installs EXCEPT
+                          monkey-sway — and on WSL/macOS also EXCEPT
+                          monkey-hyprland (pass --with-monkey-hyprland to
+                          install it there anyway).
   -h, --help              Show this help
 
 Run it from a pipe (note the \`-s --\`, which forwards the flags past
@@ -79,14 +95,13 @@ parse_args() {
 	local with=() c w
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
+		--with-monkey-hyprland) with+=("monkey-hyprland") ;;
+		--with-monkey-sway) with+=("monkey-sway") ;;
 		--with-monkey-wezterm) with+=("monkey-wezterm") ;;
 		--with-monkey-tmux) with+=("monkey-tmux") ;;
 		--with-monkey-zsh) with+=("monkey-zsh") ;;
 		--with-monkey-nvim) with+=("monkey-nvim") ;;
 		--with-monkey-vim) with+=("monkey-vim") ;;
-		--with-monkey-hyprland | --with-monkey-sway)
-			fail "$1 is not supported yet — its installer does not exist."
-			;;
 		-h | --help) usage ;;
 		*)
 			echo "Unknown option: $1"
@@ -107,7 +122,20 @@ parse_args() {
 			done
 		done
 	else
-		COMPONENTS=("${ALL_COMPONENTS[@]}")
+		# Default: everything EXCEPT monkey-sway (opt-in). On WSL or macOS
+		# a Wayland desktop config is not applicable (WSL has no VT login —
+		# XDG_VTNR is never set, so the guarded autostart block stays
+		# inert; WSLg already renders single GUI apps) — drop hyprland
+		# from the default too. An explicit --with-monkey-hyprland still
+		# installs it.
+		COMPONENTS=("${DEFAULT_COMPONENTS[@]}")
+		if [ "$(uname -s)" != "Linux" ] || is_wsl; then
+			local rest_default=() c3
+			for c3 in "${COMPONENTS[@]}"; do
+				[ "$c3" = "monkey-hyprland" ] || rest_default+=("$c3")
+			done
+			COMPONENTS=("${rest_default[@]}")
+		fi
 	fi
 	local rest=() c2
 	for c2 in "${COMPONENTS[@]}"; do
@@ -131,7 +159,13 @@ parse_args() {
 SUDO_BIN=""
 
 cleanup_sudo() {
+	# Flag cleared BEFORE acting: main() calls this explicitly and the EXIT
+	# trap calls it again on the way out. The second pass must be a no-op —
+	# once the grant file is gone, `sudo -n rm` can no longer authenticate
+	# (no timestamp is ever recorded because every sudo during the run was
+	# NOPASSWD), and it would warn even though the file was already removed.
 	if [ "$SUDO_NOPASSWD" -eq 1 ] && [ -n "$SUDO_BIN" ]; then
+		SUDO_NOPASSWD=0
 		"$SUDO_BIN" -n rm -f "$NOPASSWD_DROPIN" 2>/dev/null ||
 			warn "could not remove the NOPASSWD drop-in — remove it manually: sudo rm $NOPASSWD_DROPIN"
 	fi
@@ -194,6 +228,61 @@ have_native_cmd() {
 	return 0
 }
 
+# True under WSL (1 or 2): both kernels carry "microsoft" in the release
+# string (WSL1 "...-Microsoft", WSL2 "...-microsoft-standard-WSL2") — the
+# check Microsoft's own docs use.
+is_wsl() {
+	case "$(uname -r)" in
+	*[Mm]icrosoft*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# ────────────────── TIOCSTI injection ──────────────────
+# Type <cmd> + newline into the controlling terminal: the parent shell
+# executes it as if the user had typed it — AFTER this script (and any
+# wrapper chaining it) has fully exited, so injection can never disturb
+# the run itself. Needs python3 or perl; any failure returns non-zero so
+# callers can fall back to a printed hint. Never fatal.
+inject_tty() {
+	local cmd="$1" tiocsti
+	[ -n "$cmd" ] || return 1
+	# No writable controlling terminal (CI, nested pipes) — nothing to
+	# inject into. access(W_OK) on /dev/tty fails with ENXIO when the
+	# process has no controlling tty.
+	[ -w /dev/tty ] || return 1
+	# python3 first: termios.TIOCSTI carries the correct constant per
+	# platform (Linux 0x5412, Darwin 0x80047412).
+	if have_native_cmd python3; then
+		python3 - "$cmd" <<'PYEOF' 2>/dev/null && return 0
+import sys, os, fcntl, termios
+cmd = sys.argv[1] + "\n"
+try:
+    fd = os.open("/dev/tty", os.O_WRONLY)
+    ioctl = termios.TIOCSTI
+except (OSError, AttributeError):
+    sys.exit(1)
+for ch in cmd:
+    try:
+        fcntl.ioctl(fd, ioctl, ord(ch))
+    except OSError:
+        sys.exit(1)
+PYEOF
+	fi
+	# perl fallback: macOS ships /usr/bin/perl, Debian/Ubuntu perl-base is
+	# Essential. TIOCSTI's value differs per platform.
+	tiocsti=0x5412
+	[ "$(uname -s)" = "Darwin" ] && tiocsti=0x80047412
+	perl -e '
+		my ($cmd, $tio) = @ARGV;
+		open(my $tty, ">", "/dev/tty") or exit 1;
+		for my $ch (split //, $cmd . "\n") {
+			ioctl($tty, hex($tio), ord($ch)) or exit 1;
+		}
+	' "$cmd" "$tiocsti" 2>/dev/null && return 0
+	return 1
+}
+
 # ──────────────────────────── components ────────────────────────────
 
 run_component() {
@@ -205,6 +294,7 @@ run_component() {
 	# source.
 	if curl -fsSL "$url" | bash; then
 		ok "$name installed."
+		SUCCEEDED_COMPONENTS+=("$name")
 	else
 		FAILED_COMPONENTS+=("$name")
 		warn "$name install failed — continuing with the remaining components."
@@ -232,6 +322,43 @@ run_components() {
 	done
 }
 
+# ────────────────── current-terminal activation ──────────────────
+# Components skipped their own injection (ACQUIRE_TIOCSTI protocol) —
+# inject once here, after the whole chain has finished. The login shell
+# decides which profile holds every component's env blocks (all blocks
+# are dedup'd, so sourcing any one of them is complete and idempotent).
+inject_current_terminal() {
+	local shell_bin env_file
+	if [ "$(uname -s)" = "Darwin" ]; then
+		shell_bin="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $NF}')"
+	else
+		shell_bin="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"
+	fi
+	case "$shell_bin" in
+	*/zsh) env_file="$HOME/.zprofile" ;;
+	*/bash)
+		if [ -f "$HOME/.bash_profile" ]; then
+			env_file="$HOME/.bash_profile"
+		else
+			env_file="$HOME/.profile"
+		fi
+		;;
+	*)
+		warn "could not determine the login shell — no terminal injection."
+		return 0
+		;;
+	esac
+	[ -f "$env_file" ] || {
+		warn "$env_file not found — no terminal injection."
+		return 0
+	}
+	if [ "$ACQUIRE_TIOCSTI" = "monkey-env" ] && inject_tty "source ${env_file}"; then
+		ok "injected 'source ${env_file}' into the current terminal."
+	else
+		warn "could not inject into the current terminal — run: source ${env_file}"
+	fi
+}
+
 print_summary() {
 	echo ""
 	if [[ ${#FAILED_COMPONENTS[@]} -eq 0 ]]; then
@@ -241,10 +368,13 @@ print_summary() {
 		echo -e "  then run each component's ${CYAN}checkhealth.sh${NC} for a per-component report."
 		exit 0
 	fi
-	echo -e "${RED}${BOLD}Some components failed: ${FAILED_COMPONENTS[*]}${NC}"
-	echo -e "Re-run the installer (it is idempotent) or install them individually:"
+	if [[ ${#SUCCEEDED_COMPONENTS[@]} -gt 0 ]]; then
+		echo -e "${GREEN}Installed successfully:${NC} ${SUCCEEDED_COMPONENTS[*]}"
+	fi
+	echo -e "${RED}${BOLD}Failed: ${FAILED_COMPONENTS[*]}${NC}"
+	echo -e "Re-run the installer (it is idempotent) or install the failed ones individually:"
 	local c
-	for c in "${COMPONENTS[@]}"; do
+	for c in "${FAILED_COMPONENTS[@]}"; do
 		echo -e "  ${CYAN}curl -fsSL https://raw.githubusercontent.com/QMonkey/$c/master/install.sh | bash${NC}"
 	done
 	exit 1
@@ -254,6 +384,10 @@ print_summary() {
 
 main() {
 	parse_args "$@"
+
+	# TIOCSTI injection right: components inherit this and skip their own
+	# injection — this chain injects ONCE, here, after everything exits.
+	export ACQUIRE_TIOCSTI="${ACQUIRE_TIOCSTI:-monkey-env}"
 
 	# Every component installer is fetched with curl — without it the whole
 	# chain cannot start. Fail with an actionable message instead of letting
@@ -278,6 +412,8 @@ main() {
 	run_components
 
 	cleanup_sudo
+
+	inject_current_terminal
 
 	print_summary
 }
