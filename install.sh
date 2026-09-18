@@ -299,18 +299,17 @@ run_component() {
 		FAILED_COMPONENTS+=("$name")
 		warn "$name install failed — continuing with the remaining components."
 	fi
-	# Pick up PATH changes the component made (cargo env, the Homebrew
-	# shellenv, ...) so later components inherit them. Sourcing the
-	# profile is safe despite the tmux auto-start block it may carry:
-	# that block guards on $- == *i* and this shell is non-interactive.
-	# `set +u` around the source: user profiles reference optional vars
-	# ($TMUX etc.) and this script runs with `set -u` — an unset var in
-	# the profile must not abort the chain.
-	if [ -f "$HOME/.profile" ]; then
-		set +u
-		. "$HOME/.profile"
-		set -u
-	fi
+	# Re-expose the tool locations components install to — Homebrew, cargo
+	# and go — so later components find them instead of re-downloading.
+	# Direct PATH exports rather than sourcing the profiles: this shell
+	# only needs the tool paths, not the profiles' arbitrary user code
+	# (inits, hooks). The case guards keep PATH idempotent across
+	# components; adding an existing-but-empty dir to PATH is harmless.
+	local d
+	for d in /home/linuxbrew/.linuxbrew/bin /opt/homebrew/bin "$HOME/.cargo/bin" "$HOME/go/bin"; do
+		[ -d "$d" ] || continue
+		case ":$PATH:" in *":$d:"*) ;; *) export PATH="$d:$PATH" ;; esac
+	done
 	return 0
 }
 
