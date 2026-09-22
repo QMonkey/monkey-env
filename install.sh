@@ -14,7 +14,7 @@ set -euo pipefail
 #   --with-monkey-hyprland overrides.)
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash
 #   bash install.sh [OPTIONS]
 #
 # NOTE: `bash --with-monkey-tmux` does NOT work — bash would parse it as
@@ -84,7 +84,7 @@ OPTIONS
 Run it from a pipe (note the \`-s --\`, which forwards the flags past
 bash's own option parsing):
 
-  curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/main/install.sh | bash -s -- --with-monkey-tmux --with-monkey-zsh
+  curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash -s -- --with-monkey-tmux --with-monkey-zsh
 
 Exit code: 1 if any component failed, 0 otherwise.
 EOF
