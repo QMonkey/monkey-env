@@ -13,7 +13,7 @@ monkey-zsh runs first on purpose: it switches the login shell to zsh before anyt
 Default — install everything **except monkey-sway** (which is opt-in via `--with-monkey-sway`). On **WSL or macOS** the default also drops monkey-hyprland — a Wayland desktop config is not applicable there (WSLg already renders single GUI apps; WSL has no VT login, so the guarded autostart block would stay inert). Pass `--with-monkey-hyprland` to install it anyway:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash
 ```
 
 Vim-style selection — only the components you ask for (order is always normalized to the sequence above):
@@ -21,7 +21,7 @@ Vim-style selection — only the components you ask for (order is always normali
 Installing both desktops appends two guarded autostart blocks to your shell rc — the first one in the file (monkey-hyprland's) wins on tty1; remove the other marker's lines to switch.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/main/install.sh | bash -s -- --with-monkey-tmux --with-monkey-zsh
+curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash -s -- --with-monkey-tmux --with-monkey-zsh
 ```
 
 From a local clone:
