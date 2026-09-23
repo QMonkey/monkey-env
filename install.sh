@@ -5,10 +5,14 @@ set -euo pipefail
 # monkey-env one-shot meta-installer
 #
 # Chains the monkey-* component installers in dependency order:
-#   monkey-zsh -> monkey-hyprland -> monkey-sway -> monkey-wezterm ->
+#   monkey-zsh -> monkey-wezterm -> monkey-hyprland -> monkey-sway ->
 #   monkey-tmux -> monkey-nvim -> monkey-vim
-#   (runtime order: monkey-zsh is hoisted to the front — its chsh must
-#   precede the later stages. monkey-sway is opt-in: --with-monkey-sway.
+#   (runtime order: monkey-zsh and monkey-wezterm are hoisted to the
+#   front — zsh's chsh must precede the later stages so their env blocks
+#   land in ~/.zprofile; wezterm precedes the compositors because both
+#   checkhealth scripts treat it as their default terminal and would
+#   otherwise install it themselves, bypassing this component's source build.
+#   monkey-sway is opt-in: --with-monkey-sway.
 #   Default installs everything else, including monkey-hyprland — except
 #   on WSL/macOS, where the default drops monkey-hyprland as well;
 #   --with-monkey-hyprland overrides.)
@@ -34,7 +38,7 @@ SUDO_NOPASSWD=0
 NOPASSWD_DROPIN="$SUDOERS_D_DIR/zz-monkey-env-nopasswd"
 
 # Canonical --with-* projection order — outer environment first, editors
-# last. At runtime monkey-zsh is hoisted to the front (see parse_args).
+# last. At runtime monkey-zsh and monkey-wezterm are hoisted to the front (see parse_args).
 ALL_COMPONENTS=(monkey-hyprland monkey-sway monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim)
 # Default selection when no --with-* flag is given: everything EXCEPT
 # monkey-sway (opt-in — a second Wayland desktop; installing both is fine,
@@ -60,9 +64,10 @@ usage() {
 Usage: $0 [OPTIONS]
 
 One-shot meta-installer for the monkey-* family. Installs the component
-configs in dependency order: hyprland -> sway -> wezterm -> tmux -> nvim ->
+configs in dependency order: wezterm -> hyprland -> sway -> tmux -> nvim ->
 vim (monkey-zsh runs first so its login-shell switch precedes the other
-components' profile writes; monkey-sway is opt-in).
+components' profile writes; wezterm precedes the compositors because both
+treat it as their default terminal; monkey-sway is opt-in).
 
 OPTIONS
   --with-monkey-hyprland  Include the Hyprland desktop config
@@ -73,8 +78,8 @@ OPTIONS
   --with-monkey-nvim      Include the nvim config
   --with-monkey-vim       Include the vim config
                           Multiple --with-* flags combine; the install order
-                          is always zsh first, then hyprland -> sway ->
-                          wezterm -> tmux -> nvim -> vim. Without any
+                          is always zsh first, then wezterm -> hyprland ->
+                          sway -> tmux -> nvim -> vim. Without any
                           --with-* flag, everything installs EXCEPT
                           monkey-sway — and on WSL/macOS also EXCEPT
                           monkey-hyprland (pass --with-monkey-hyprland to
@@ -137,15 +142,21 @@ parse_args() {
 			COMPONENTS=("${rest_default[@]}")
 		fi
 	fi
-	local rest=() c2
+	local has_zsh=0 has_wezterm=0 rest=() c2
 	for c2 in "${COMPONENTS[@]}"; do
-		[ "$c2" = "monkey-zsh" ] || rest+=("$c2")
+		case "$c2" in
+		monkey-zsh) has_zsh=1 ;;
+		monkey-wezterm) has_wezterm=1 ;;
+		*) rest+=("$c2") ;;
+		esac
 	done
 	if [[ ${#rest[@]} -lt ${#COMPONENTS[@]} ]]; then
-		# zsh first: monkey-zsh's chsh runs before the later stages, so
-		# their env blocks land in ~/.zprofile (the components query the
-		# login shell from the user database).
-		COMPONENTS=("monkey-zsh" "${rest[@]}")
+		COMPONENTS=()
+		[ "$has_zsh" -eq 1 ] && COMPONENTS+=("monkey-zsh")
+		[ "$has_wezterm" -eq 1 ] && COMPONENTS+=("monkey-wezterm")
+		if [[ ${#rest[@]} -gt 0 ]]; then
+			COMPONENTS+=("${rest[@]}")
+		fi
 	fi
 }
 
