@@ -3,10 +3,12 @@
 One-shot meta-installer for the monkey-* family. Chains the component installers in dependency order with a single password entry:
 
 ```text
-monkey-zsh -> monkey-hyprland -> monkey-sway -> monkey-wezterm -> monkey-tmux -> monkey-nvim -> monkey-vim
+monkey-zsh -> monkey-wezterm -> monkey-hyprland -> monkey-sway -> monkey-tmux -> monkey-nvim -> monkey-vim
 ```
 
 monkey-zsh runs first on purpose: it switches the login shell to zsh before anything else, so the env blocks the later components persist land in `~/.zprofile` (which zsh reads) instead of `.profile`.
+
+monkey-wezterm runs before the compositors on purpose: both monkey-hyprland and monkey-sway treat WezTerm as their default terminal and would otherwise try to install it themselves, bypassing this component's source build.
 
 ## Install
 
