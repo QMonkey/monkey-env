@@ -26,16 +26,16 @@ set -euo pipefail
 # everything after `--` to this script as positional parameters.
 # ──────────────────────────────────────────────────────────────
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly CYAN='\033[0;36m'
+readonly BOLD='\033[1m'
+readonly NC='\033[0m'
 
-SUDOERS_D_DIR="${SUDOERS_D_DIR:-/etc/sudoers.d}"
+readonly SUDOERS_D_DIR="${SUDOERS_D_DIR:-/etc/sudoers.d}"
 SUDO_NOPASSWD=0
-NOPASSWD_DROPIN="$SUDOERS_D_DIR/zz-monkey-env-nopasswd"
+readonly NOPASSWD_DROPIN="$SUDOERS_D_DIR/zz-monkey-env-nopasswd"
 
 # Canonical --with-* projection order — outer environment first, editors
 # last. At runtime monkey-zsh and monkey-wezterm are hoisted to the front (see parse_args).
@@ -160,6 +160,38 @@ parse_args() {
 	fi
 }
 
+# Absolute path to a LINUX sudo, or non-zero. Windows 11 ships an optional
+# sudo.exe that WSL interop exposes as /mnt/.../sudo.exe — running it from
+# WSL would be meaningless.
+native_sudo() {
+	local p
+	have_native_cmd sudo || return 1
+	p=$(command -v sudo)
+	printf '%s' "$p"
+}
+
+# True under WSL (1 or 2): both kernels carry "microsoft" in the release
+# string (WSL1 "...-Microsoft", WSL2 "...-microsoft-standard-WSL2").
+is_wsl() {
+	case "$(uname -r)" in
+	*[Mm]icrosoft*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# WSL interop appends the WINDOWS PATH to ours, so tools installed on the
+# Windows side (node, python, sudo.exe, ...) appear as /mnt/c/... shims.
+# They are not Linux binaries and root's secure_path cannot see them —
+# treat /mnt/* resolutions as "not installed" so the real Linux packages
+# get installed instead.
+have_native_cmd() {
+	command -v "$1" &>/dev/null || return 1
+	case "$(command -v "$1")" in
+	/mnt/*) return 1 ;; # WSL Windows-interop shim
+	esac
+	return 0
+}
+
 # ──────────────────────────── sudo setup ────────────────────────────
 # The meta-installer holds ONE temporary NOPASSWD grant for the whole
 # chain: without it, every component installer would ask for the password
@@ -217,36 +249,6 @@ setup_sudo() {
 	trap cleanup_sudo EXIT
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
-}
-
-# Absolute path to a LINUX sudo, or non-zero. Windows 11 ships an optional
-# sudo.exe that WSL interop exposes as /mnt/.../sudo.exe — running it from
-# WSL would be meaningless.
-native_sudo() {
-	local p
-	have_native_cmd sudo || return 1
-	p=$(command -v sudo)
-	printf '%s' "$p"
-}
-
-# WSL interop appends the WINDOWS PATH to ours, so tools installed on the
-# Windows side appear as /mnt/c/... shims. They are not Linux binaries.
-have_native_cmd() {
-	command -v "$1" &>/dev/null || return 1
-	case "$(command -v "$1")" in
-	/mnt/*) return 1 ;; # WSL Windows-interop shim
-	esac
-	return 0
-}
-
-# True under WSL (1 or 2): both kernels carry "microsoft" in the release
-# string (WSL1 "...-Microsoft", WSL2 "...-microsoft-standard-WSL2") — the
-# check Microsoft's own docs use.
-is_wsl() {
-	case "$(uname -r)" in
-	*[Mm]icrosoft*) return 0 ;;
-	*) return 1 ;;
-	esac
 }
 
 # ────────────────── TIOCSTI injection ──────────────────
@@ -420,8 +422,6 @@ main() {
 	setup_sudo
 
 	run_components
-
-	cleanup_sudo
 
 	inject_current_terminal
 
