@@ -24,18 +24,66 @@ set -euo pipefail
 # NOTE: `bash --with-monkey-tmux` does NOT work — bash would parse it as
 # its own option. `bash -s --` ends bash's option parsing and forwards
 # everything after `--` to this script as positional parameters.
+#
+# The shared components (colors, logging, sudo grant, TIOCSTI injection)
+# live in scripts/ — a `git subtree` of github.com/QMonkey/monkey-scripts.
+# On the curl|bash path there is no checkout at all, so install.sh clones
+# THIS repo and runs the copy of install.sh inside it — that copy carries
+# its own scripts/, so both come from the same revision. The component
+# chain itself is this file's own main().
 # ──────────────────────────────────────────────────────────────
 
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly CYAN='\033[0;36m'
-readonly BOLD='\033[1m'
-readonly NC='\033[0m'
+# ──────────────────────── repository identity ────────────────────────
+# Declared before the framework is sourced: the bootstrap below needs
+# both values, and clones into the very directory clone_monkey_project
+# would have used — one clone per run, not two.
+PROJECT=monkey-env
+PROJECT_REPO=https://github.com/QMonkey/monkey-env.git
+INSTALL_DIR="${INSTALL_DIR:-$HOME/Documents/monkey-env}"
 
-readonly SUDOERS_D_DIR="${SUDOERS_D_DIR:-/etc/sudoers.d}"
-SUDO_NOPASSWD=0
-readonly NOPASSWD_DROPIN="$SUDOERS_D_DIR/zz-monkey-env-nopasswd"
+# No scripts/ next to this file: either a checkout predating the subtree
+# commit (pull it in and carry on) or `curl | bash`, which has no checkout
+# at all. The latter clones THIS project and runs the install.sh from that
+# checkout, so installer and scripts/ always come from the same revision.
+_monkey_scripts="$(dirname "${BASH_SOURCE[0]:-$0}")/scripts"
+if [ ! -f "$_monkey_scripts/install.sh" ]; then
+	_monkey_self="${BASH_SOURCE[0]:-$0}"
+	_monkey_dir="$(dirname "$_monkey_self")"
+	if [ -f "$_monkey_self" ] && [ -d "$_monkey_dir/.git" ]; then
+		git -C "$_monkey_dir" pull --ff-only || true
+		_monkey_scripts="$_monkey_dir/scripts"
+		if [ ! -f "$_monkey_scripts/install.sh" ]; then
+			echo "monkey-scripts missing from $_monkey_dir (no scripts/ subtree)." >&2
+			echo "  git -C $_monkey_dir pull    # outdated checkout — or the repo never added the subtree" >&2
+			exit 1
+		fi
+	else
+		# curl|bash: no checkout at all. Get one that carries scripts/ and
+		# hand over to its installer, so install.sh and scripts/ can never be
+		# different revisions. clone_monkey_project cannot do this job — it
+		# lives in the very scripts/ being fetched. INSTALL_DIR is where the
+		# framework's clone step would have put the checkout too, so that step
+		# only confirms it.
+		if [ -d "$INSTALL_DIR/.git" ]; then
+			# An install already lives here: update it, then run that one.
+			git -C "$INSTALL_DIR" pull --ff-only || true
+		elif [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR")" ]; then
+			# git clone would refuse too, so say why in our own words.
+			echo "$INSTALL_DIR is not empty and is not a git clone." >&2
+			echo "  move it aside, delete it, or set INSTALL_DIR elsewhere." >&2
+			exit 1
+		else
+			git clone "$PROJECT_REPO" "$INSTALL_DIR" || exit 1
+		fi
+		# </dev/null: on the curl|bash path stdin is the script pipe, and the
+		# inner installer must not read what is left of the outer one.
+		exec bash "$INSTALL_DIR/install.sh" "$@" </dev/null
+	fi
+fi
+# shellcheck source=/dev/null
+. "$_monkey_scripts/install.sh"
+
+# ──────────────────────── component chain ────────────────────────
 
 # Canonical --with-* projection order — outer environment first, editors
 # last. At runtime monkey-zsh and monkey-wezterm are hoisted to the front (see parse_args).
@@ -51,13 +99,7 @@ COMPONENTS=()
 SUCCEEDED_COMPONENTS=()
 FAILED_COMPONENTS=()
 
-info() { echo -e "${CYAN}[INFO]${NC}  $*"; }
-ok() { echo -e "${GREEN}[  OK]${NC}  $*"; }
-warn() { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-fail() {
-	echo -e "${RED}[FAIL]${NC}  $*"
-	exit 1
-}
+# ──────────────────────── selection ────────────────────────
 
 usage() {
 	cat <<EOF
@@ -160,143 +202,7 @@ parse_args() {
 	fi
 }
 
-# Absolute path to a LINUX sudo, or non-zero. Windows 11 ships an optional
-# sudo.exe that WSL interop exposes as /mnt/.../sudo.exe — running it from
-# WSL would be meaningless.
-native_sudo() {
-	local p
-	have_native_cmd sudo || return 1
-	p=$(command -v sudo)
-	printf '%s' "$p"
-}
-
-# True under WSL (1 or 2): both kernels carry "microsoft" in the release
-# string (WSL1 "...-Microsoft", WSL2 "...-microsoft-standard-WSL2").
-is_wsl() {
-	case "$(uname -r)" in
-	*[Mm]icrosoft*) return 0 ;;
-	*) return 1 ;;
-	esac
-}
-
-# WSL interop appends the WINDOWS PATH to ours, so tools installed on the
-# Windows side (node, python, sudo.exe, ...) appear as /mnt/c/... shims.
-# They are not Linux binaries and root's secure_path cannot see them —
-# treat /mnt/* resolutions as "not installed" so the real Linux packages
-# get installed instead.
-have_native_cmd() {
-	command -v "$1" &>/dev/null || return 1
-	case "$(command -v "$1")" in
-	/mnt/*) return 1 ;; # WSL Windows-interop shim
-	esac
-	return 0
-}
-
-# ──────────────────────────── sudo setup ────────────────────────────
-# The meta-installer holds ONE temporary NOPASSWD grant for the whole
-# chain: without it, every component installer would ask for the password
-# separately (five prompts). With it, each component's own `sudo -v`
-# succeeds silently and their per-component drop-ins become redundant but
-# harmless. Removed on exit.
-
-SUDO_BIN=""
-
-cleanup_sudo() {
-	# Flag cleared BEFORE acting: main() calls this explicitly and the EXIT
-	# trap calls it again on the way out. The second pass must be a no-op —
-	# once the grant file is gone, `sudo -n rm` can no longer authenticate
-	# (no timestamp is ever recorded because every sudo during the run was
-	# NOPASSWD), and it would warn even though the file was already removed.
-	if [ "$SUDO_NOPASSWD" -eq 1 ] && [ -n "$SUDO_BIN" ]; then
-		SUDO_NOPASSWD=0
-		"$SUDO_BIN" -n rm -f "$NOPASSWD_DROPIN" 2>/dev/null ||
-			warn "could not remove the NOPASSWD drop-in — remove it manually: sudo rm $NOPASSWD_DROPIN"
-	fi
-}
-
-setup_sudo() {
-	SUDO_BIN=$(native_sudo) || return 0
-	if [ "$(id -u)" -eq 0 ]; then
-		return 0
-	fi
-	# Pre-authenticate — the only password entry of the whole chain — then
-	# grant NOPASSWD for the rest of it:
-	#
-	# Probe first (`-n true`, a command): when credentials are already
-	# valid — this run's own drop-in from a previous stage, or an outer
-	# installer's grant — skip the authenticate step entirely; chained
-	# stages never re-prompt. Failure means no valid grant exists and
-	# `sudo -v` prompts for the one password of the run.
-	#
-	# Why the drop-in is NOPASSWD: authentication is granted by the rule
-	# itself and the timestamp is never consulted, so brew's
-	# --reset-timestamp, clock jumps and plain expiry are all harmless.
-	# GNU sudo resolves conflicting rules last-match-wins, so this drop-in
-	# (parsed after the distro's password-required rule) always wins.
-	# sudo-rs would defeat this tag for VALIDATE (max_by_key picks the
-	# password-required rule) — but every sudo in this script is a command
-	# or the probe, where NOPASSWD wins on both implementations.
-	if ! "$SUDO_BIN" -n true 2>/dev/null; then
-		"$SUDO_BIN" -v || fail "sudo authorization failed — run this script in an interactive terminal."
-	fi
-	if printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$(id -un)" |
-		"$SUDO_BIN" -n sh -c 'umask 077; cat >"$1" && chmod 0440 "$1" && visudo -c -f "$1" >/dev/null 2>&1 || { rm -f "$1"; exit 1; }' sh "$NOPASSWD_DROPIN" >/dev/null 2>&1; then
-		SUDO_NOPASSWD=1
-		ok "Temporary NOPASSWD drop-in installed for this run (auto-removed on exit)."
-	else
-		warn "could not install the temporary NOPASSWD drop-in — each component will ask for the password separately."
-	fi
-	trap cleanup_sudo EXIT
-	trap 'exit 130' INT
-	trap 'exit 143' TERM
-}
-
-# ────────────────── TIOCSTI injection ──────────────────
-# Type <cmd> + newline into the controlling terminal: the parent shell
-# executes it as if the user had typed it — AFTER this script (and any
-# wrapper chaining it) has fully exited, so injection can never disturb
-# the run itself. Needs python3 or perl; any failure returns non-zero so
-# callers can fall back to a printed hint. Never fatal.
-inject_tty() {
-	local cmd="$1" tiocsti
-	[ -n "$cmd" ] || return 1
-	# No writable controlling terminal (CI, nested pipes) — nothing to
-	# inject into. access(W_OK) on /dev/tty fails with ENXIO when the
-	# process has no controlling tty.
-	[ -w /dev/tty ] || return 1
-	# python3 first: termios.TIOCSTI carries the correct constant per
-	# platform (Linux 0x5412, Darwin 0x80047412).
-	if have_native_cmd python3; then
-		python3 - "$cmd" <<'PYEOF' 2>/dev/null && return 0
-import sys, os, fcntl, termios
-cmd = sys.argv[1] + "\n"
-try:
-    fd = os.open("/dev/tty", os.O_WRONLY)
-    ioctl = termios.TIOCSTI
-except (OSError, AttributeError):
-    sys.exit(1)
-for ch in cmd:
-    try:
-        fcntl.ioctl(fd, ioctl, ord(ch))
-    except OSError:
-        sys.exit(1)
-PYEOF
-	fi
-	# perl fallback: macOS ships /usr/bin/perl, Debian/Ubuntu perl-base is
-	# Essential. TIOCSTI's value differs per platform.
-	tiocsti=0x5412
-	[ "$(uname -s)" = "Darwin" ] && tiocsti=0x80047412
-	perl -e '
-		my ($cmd, $tio) = @ARGV;
-		open(my $tty, ">", "/dev/tty") or exit 1;
-		for my $ch (split //, $cmd . "\n") {
-			ioctl($tty, hex($tio), ord($ch)) or exit 1;
-		}
-	' "$cmd" "$tiocsti" 2>/dev/null && return 0
-	return 1
-}
-
-# ──────────────────────────── components ────────────────────────────
+# ──────────────────────── components ────────────────────────
 
 run_component() {
 	local name="$1"
@@ -393,6 +299,8 @@ print_summary() {
 }
 
 # ──────────────────── main ────────────────────
+# Custom flow: no install_main() here — the chain, its banner section and
+# the single end-of-chain injection are this file's own.
 
 main() {
 	parse_args "$@"
@@ -407,11 +315,7 @@ main() {
 	have_native_cmd curl ||
 		fail "curl is required to fetch the component installers — install it first (e.g. sudo apt-get install curl), then re-run."
 
-	echo ""
-	echo -e "${BOLD}╔══════════════════════════════════════════╗${NC}"
-	echo -e "${BOLD}║       monkey-env installer               ║${NC}"
-	echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
-	echo ""
+	print_banner "${PROJECT} installer"
 	local c
 	echo -e "${BOLD}Components (in install order)${NC}"
 	for c in "${COMPONENTS[@]}"; do

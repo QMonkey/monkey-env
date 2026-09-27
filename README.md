@@ -34,6 +34,32 @@ bash install.sh --with-monkey-wezterm
 
 > **Why `bash -s --`?** `curl ... | bash --with-monkey-tmux` does not work: bash parses `--with-monkey-tmux` as its own option and exits with "invalid option". `-s` makes bash read the script from stdin, and `--` ends bash's option parsing — everything after it is forwarded to the script as positional parameters.
 
+## `scripts/` (shared framework)
+
+The `scripts/` directory is a [git subtree](https://git-scm.com/docs/git-subtree)
+of [monkey-scripts](https://github.com/QMonkey/monkey-scripts) — the shared
+install/checkhealth framework that this repo's `install.sh` and
+`checkhealth.sh` are built on. Do not edit it here; update it from upstream:
+
+```bash
+# first-time fetch (cloned without the subtree):
+git subtree add -P scripts https://github.com/QMonkey/monkey-scripts.git master
+# later updates:
+git subtree pull -P scripts --squash https://github.com/QMonkey/monkey-scripts.git master
+```
+
+The one-click installer works without a subtree: on the `curl | bash` path it
+clones *this* repo straight into the install directory (`~/Documents/monkey-env`)
+and runs the `install.sh` from that clone, so the installer and the `scripts/`
+it loads always come from the same revision. If that directory already exists
+but is not a git clone, the installer refuses to touch it and tells you so.
+Once the subtree above is committed and
+pushed, a regular `git clone` of this repo already contains `scripts/` —
+there is nothing extra to clone or pull; updates arrive through a plain
+`git pull`. Only a checkout from before that commit lacks `scripts/`:
+`git pull` (or re-running `install.sh`, which pulls that checkout in place)
+fixes it.
+
 ## What it does
 
 1. Pre-authorize `sudo` once — the only password entry of the whole chain — and install a **temporary** NOPASSWD sudoers drop-in for the invoking user, removed automatically on exit. Without it, every component installer would ask for the password separately (five prompts). If the drop-in cannot be installed, each component falls back to its own password handling
@@ -57,5 +83,5 @@ All component installers are idempotent: re-runs update instead of reinstall, an
 
 ## Requirements
 
-- One of the supported Linux distros (Debian/Ubuntu, Arch, openSUSE, CentOS/RHEL/Fedora family) or macOS
+- One of the supported Linux distros (Debian, Ubuntu, Arch, openSUSE, CentOS/RHEL/Rocky/Alma, Fedora) or macOS
 - Network access to github.com (component installers are fetched at run time)
