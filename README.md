@@ -18,6 +18,8 @@ Default — install everything **except monkey-sway** (which is opt-in via `--wi
 curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash
 ```
 
+> The one-liner needs `git` besides `curl` itself: the installer clones this repository into `~/Documents/monkey-env`, and every component installer it chains is fetched with `curl` and clones its own repo too — so `git` is required no matter how you run the installer. If `git` is missing, the script stops with an error — install it with your system's package manager and re-run the same command.
+
 Vim-style selection — only the components you ask for (order is always normalized to the sequence above):
 
 Installing both desktops appends two guarded autostart blocks to your shell rc — the first one in the file (monkey-hyprland's) wins on tty1; remove the other marker's lines to switch.
@@ -49,7 +51,7 @@ git subtree pull -P scripts --squash https://github.com/QMonkey/monkey-scripts.g
 ```
 
 The one-click installer works without a subtree: on the `curl | bash` path it
-clones *this* repo straight into the install directory (`~/Documents/monkey-env`)
+clones _this_ repo straight into the install directory (`~/Documents/monkey-env`)
 and runs the `install.sh` from that clone, so the installer and the `scripts/`
 it loads always come from the same revision. If that directory already exists
 but is not a git clone, the installer refuses to touch it and tells you so.
