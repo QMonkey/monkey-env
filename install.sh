@@ -64,6 +64,10 @@ if [ ! -f "$_monkey_scripts/install.sh" ]; then
 		# lives in the very scripts/ being fetched. INSTALL_DIR is where the
 		# framework's clone step would have put the checkout too, so that step
 		# only confirms it.
+		if ! command -v git >/dev/null 2>&1; then
+			echo "git is required to clone $PROJECT — install it first (e.g. sudo apt-get install git), then re-run." >&2
+			exit 1
+		fi
 		if [ -d "$INSTALL_DIR/.git" ]; then
 			# An install already lives here: update it, then run that one.
 			git -C "$INSTALL_DIR" pull --ff-only || true
@@ -309,9 +313,12 @@ main() {
 	# injection — this chain injects ONCE, here, after everything exits.
 	export ACQUIRE_TIOCSTI="${ACQUIRE_TIOCSTI:-monkey-env}"
 
-	# Every component installer is fetched with curl — without it the whole
-	# chain cannot start. Fail with an actionable message instead of letting
-	# each component die with a confusing "curl: command not found".
+	# Every component installer is fetched with curl and clones its own repo
+	# with git — both are hard prerequisites of the whole chain. Fail fast
+	# with an actionable message instead of letting every component's
+	# bootstrap die with a confusing per-component error.
+	have_native_cmd git ||
+		fail "git is required to clone the component repositories — install it first (e.g. sudo apt-get install git), then re-run."
 	have_native_cmd curl ||
 		fail "curl is required to fetch the component installers — install it first (e.g. sudo apt-get install curl), then re-run."
 
