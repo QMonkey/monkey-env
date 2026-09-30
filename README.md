@@ -40,6 +40,13 @@ From a local clone:
 bash install.sh --with-monkey-wezterm
 ```
 
+Optional console upgrade — `--with-kmscon [tty[,tty...]]` (default `tty2`) installs the kmscon package and enables `kmscon@ttyN` on the listed VTs while masking `getty@ttyN` there; the bare getty stays on every other VT as the last-resort console. Inside a kmscon session, the compositor autostart blocks wrap the compositor in `kmscon-launch-gui`, shipped by the distro kmscon packages. The flag is handled by this installer itself — it is **not** forwarded to the components — and works with or without the desktop components (a headless server with a GPU can pass `tty1`). Pass `tty1` only when no display manager owns it — the runtime DM-collision check warns but does not stop. Setup failures never abort the install: unsupported environments (no systemd/KMS) are skipped with a warning.
+
+```bash
+bash install.sh --with-kmscon
+bash install.sh --with-kmscon tty1,tty2
+```
+
 > **Why `bash -s --`?** `curl ... | bash --with-monkey-tmux` does not work: bash parses `--with-monkey-tmux` as its own option and exits with "invalid option". `-s` makes bash read the script from stdin, and `--` ends bash's option parsing — everything after it is forwarded to the script as positional parameters.
 
 ## `scripts/` (shared framework)
