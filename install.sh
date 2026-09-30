@@ -119,6 +119,7 @@ DEFAULT_COMPONENTS=(monkey-hyprland monkey-wezterm monkey-tmux monkey-zsh monkey
 COMPONENTS=()
 SUCCEEDED_COMPONENTS=()
 FAILED_COMPONENTS=()
+WITH_KMSCON=""
 
 # ──────────────────────── selection ────────────────────────
 
@@ -147,6 +148,14 @@ OPTIONS
                           monkey-sway — and on WSL/macOS also EXCEPT
                           monkey-hyprland (pass --with-monkey-hyprland to
                           install it there anyway).
+  --with-kmscon [tty[,tty...]]
+                          Enable the kmscon console on the given VTs
+                          (default tty2): installs kmscon, enables
+                          kmscon@ttyN and masks getty@ttyN there; the
+                          bare getty stays on every other VT as the
+                          last-resort console. Handled by this installer
+                          itself — not forwarded to components. Fatal on
+                          machines without systemd/KMS (e.g. containers).
   -h, --help              Show this help
 
 Run it from a pipe (note the \`-s --\`, which forwards the flags past
@@ -170,6 +179,13 @@ parse_args() {
 		--with-monkey-zsh) with+=("monkey-zsh") ;;
 		--with-monkey-nvim) with+=("monkey-nvim") ;;
 		--with-monkey-vim) with+=("monkey-vim") ;;
+		--with-kmscon)
+			WITH_KMSCON=tty2
+			if [[ $# -gt 1 && "$2" != --* ]]; then
+				WITH_KMSCON=$2
+				shift
+			fi
+			;;
 		-h | --help) usage ;;
 		*)
 			echo "Unknown option: $1"
@@ -358,6 +374,17 @@ main() {
 	echo ""
 
 	setup_sudo
+
+	# kmscon is this installer's own concern — the components never see
+	# the flag (see usage). Non-Linux/WSL has no usable VT/console stack.
+	if [ -n "$WITH_KMSCON" ]; then
+		if [ "$(uname -s)" != "Linux" ] || is_wsl; then
+			warn "kmscon is not applicable on WSL/macOS — skipping."
+		else
+			ensure_kmscon "$WITH_KMSCON" || warn "kmscon setup failed — continuing without it."
+			echo ""
+		fi
+	fi
 
 	run_components
 
