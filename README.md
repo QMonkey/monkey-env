@@ -28,6 +28,12 @@ Installing both desktops appends two guarded autostart blocks to your shell rc â
 curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash -s -- --with-monkey-tmux --with-monkey-zsh
 ```
 
+Full install â€” every component, including the two opt-ins monkey-hyprland and monkey-sway. `2>&1 | tee` dumps the whole output (stdout and stderr) to `monkey-env-install.log` in the current directory while still printing it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash -s -- --with-monkey-hyprland --with-monkey-sway --with-monkey-wezterm --with-monkey-tmux --with-monkey-zsh --with-monkey-nvim --with-monkey-vim 2>&1 | tee monkey-env-install.log
+```
+
 From a local clone:
 
 ```bash
