@@ -274,7 +274,7 @@ run_component() {
 	# at the FRONT, Homebrew APPENDED at the back — brew's binaries must
 	# not shadow the system's (its python@3.x hid /usr/bin/python3).
 	local d
-	for d in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/go/bin"; do
+	for d in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/go/bin" "$HOME/.npm-global/bin"; do
 		[ -d "$d" ] || continue
 		case ":$PATH:" in *":$d:"*) ;; *) export PATH="$d:$PATH" ;; esac
 	done
