@@ -270,11 +270,17 @@ run_component() {
 	# Direct PATH exports rather than sourcing the profiles: this shell
 	# only needs the tool paths, not the profiles' arbitrary user code
 	# (inits, hooks). The case guards keep PATH idempotent across
-	# components; adding an existing-but-empty dir to PATH is harmless.
+	# components. Two tiers, mirroring _preseed_path: user whitelist dirs
+	# at the FRONT, Homebrew APPENDED at the back — brew's binaries must
+	# not shadow the system's (its python@3.x hid /usr/bin/python3).
 	local d
-	for d in /home/linuxbrew/.linuxbrew/bin /opt/homebrew/bin "$HOME/.cargo/bin" "$HOME/go/bin"; do
+	for d in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/go/bin"; do
 		[ -d "$d" ] || continue
 		case ":$PATH:" in *":$d:"*) ;; *) export PATH="$d:$PATH" ;; esac
+	done
+	for d in /home/linuxbrew/.linuxbrew/bin /opt/homebrew/bin; do
+		[ -d "$d" ] || continue
+		case ":$PATH:" in *":$d:"*) ;; *) export PATH="$PATH:$d" ;; esac
 	done
 	return 0
 }
