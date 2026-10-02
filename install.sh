@@ -17,6 +17,16 @@ set -euo pipefail
 #   on WSL/macOS, where the default drops monkey-hyprland as well;
 #   --with-monkey-hyprland overrides.)
 #
+# kmscon is not a component but a local SYSTEM-LEVEL setup step (install
+# the package, write the unit/PAM bits, enable kmscon@ttyN and mask
+# getty@ttyN) selected with --with-kmscon [tty[,tty...]]. It always runs
+# FIRST — before any component: it depends on nothing but sudo (granted
+# by setup_sudo) and the package manager, no component depends on it, and
+# running it before the user-config steps means a VT takeover is already
+# in place no matter how far the chain gets. On WSL/macOS it is skipped
+# with a warning. Given without any component flag, only the kmscon
+# setup runs (headless console).
+#
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash
 #   bash install.sh [OPTIONS]
@@ -42,32 +52,29 @@ PROJECT_REPO=https://github.com/QMonkey/monkey-env.git
 INSTALL_DIR="${INSTALL_DIR:-$HOME/Documents/monkey-env}"
 
 # No scripts/ next to this file: either a checkout predating the subtree
-# commit (pull it in and carry on) or `curl | bash`, which has no checkout
-# at all. The latter clones THIS project and runs the install.sh from that
-# checkout, so installer and scripts/ always come from the same revision.
+# commit (pull it in and carry on), a .git-less directory (zip/tarball),
+# or `curl | bash`, which has no checkout at all. The latter two bootstrap
+# through INSTALL_DIR and run the install.sh from that checkout, so
+# installer and scripts/ always come from the same revision.
 _monkey_scripts="$(dirname "${BASH_SOURCE[0]:-$0}")/scripts"
 if [ ! -f "$_monkey_scripts/install.sh" ]; then
 	_monkey_self="${BASH_SOURCE[0]:-$0}"
 	_monkey_dir="$(dirname "$_monkey_self")"
 	if [ -f "$_monkey_self" ] && [ -d "$_monkey_dir/.git" ]; then
+		# Outdated checkout: update it in place and keep running from it.
 		git -C "$_monkey_dir" pull --ff-only || true
-		_monkey_scripts="$_monkey_dir/scripts"
-		if [ ! -f "$_monkey_scripts/install.sh" ]; then
+		if [ ! -f "$_monkey_dir/scripts/install.sh" ]; then
 			echo "monkey-scripts missing from $_monkey_dir (no scripts/ subtree)." >&2
 			echo "  git -C $_monkey_dir pull    # outdated checkout — or the repo never added the subtree" >&2
 			exit 1
 		fi
+		_monkey_scripts="$_monkey_dir/scripts"
 	else
-		# curl|bash: no checkout at all. Get one that carries scripts/ and
-		# hand over to its installer, so install.sh and scripts/ can never be
-		# different revisions. clone_monkey_project cannot do this job — it
-		# lives in the very scripts/ being fetched. INSTALL_DIR is where the
-		# framework's clone step would have put the checkout too, so that step
-		# only confirms it.
-		if ! command -v git >/dev/null 2>&1; then
-			echo "git is required to clone $PROJECT — install it first (e.g. sudo apt-get install git), then re-run." >&2
-			exit 1
-		fi
+		# curl|bash or a .git-less directory: the only path to a
+		# same-revision scripts/ is the INSTALL_DIR checkout.
+		# clone_monkey_project cannot do this job — it lives in the very
+		# scripts/ being fetched. INSTALL_DIR is where the framework's clone
+		# step would have put the checkout too, so that step only confirms it.
 		if [ -d "$INSTALL_DIR/.git" ]; then
 			# An install already lives here: update it, then run that one.
 			git -C "$INSTALL_DIR" pull --ff-only || true
@@ -77,24 +84,31 @@ if [ ! -f "$_monkey_scripts/install.sh" ]; then
 			echo "  move it aside, delete it, or set INSTALL_DIR elsewhere." >&2
 			exit 1
 		else
+			# Fresh clone — the ONLY sub-branch where git is hard-required:
+			# the pull sub-branch above degrades gracefully without it, and
+			# a zip/tarball must not fail here just for a missing git.
+			if ! command -v git >/dev/null 2>&1; then
+				echo "git is required to clone $PROJECT — install it first (e.g. sudo apt-get install git), then re-run." >&2
+				exit 1
+			fi
 			# No retry() available yet — the framework loads only after this
-		# clone succeeds — so inline the standard 3 attempts. A failed clone
-		# leaves a partial directory behind; remove it so the next attempt
-		# cannot trip over "already exists". This branch only runs on a
-		# fresh install (INSTALL_DIR did not exist or was empty), so the rm
-		# can never delete pre-existing data.
-		_monkey_rc=1
-		for _monkey_attempt in 1 2 3; do
-			if git clone "$PROJECT_REPO" "$INSTALL_DIR"; then
-				_monkey_rc=0
-				break
-			fi
-			rm -rf "$INSTALL_DIR"
-			if [ "$_monkey_attempt" -lt 3 ]; then
-				sleep 2
-			fi
-		done
-		[ "$_monkey_rc" -eq 0 ] || exit 1
+			# clone succeeds — so inline the standard 3 attempts. A failed
+			# clone leaves a partial directory behind; remove it so the next
+			# attempt cannot trip over "already exists". This branch only
+			# runs on a fresh install (INSTALL_DIR did not exist or was
+			# empty), so the rm can never delete pre-existing data.
+			_monkey_rc=1
+			for _monkey_attempt in 1 2 3; do
+				if git clone "$PROJECT_REPO" "$INSTALL_DIR"; then
+					_monkey_rc=0
+					break
+				fi
+				rm -rf "$INSTALL_DIR"
+				if [ "$_monkey_attempt" -lt 3 ]; then
+					sleep 2
+				fi
+			done
+			[ "$_monkey_rc" -eq 0 ] || exit 1
 		fi
 		# </dev/null: on the curl|bash path stdin is the script pipe, and the
 		# inner installer must not read what is left of the outer one.
@@ -296,23 +310,12 @@ run_component() {
 		FAILED_COMPONENTS+=("$name")
 		warn "$name installer download failed — continuing with the remaining components."
 	fi
-	# Re-expose the tool locations components install to — Homebrew, cargo
-	# and go — so later components find them instead of re-downloading.
-	# Direct PATH exports rather than sourcing the profiles: this shell
-	# only needs the tool paths, not the profiles' arbitrary user code
-	# (inits, hooks). The case guards keep PATH idempotent across
-	# components. Two tiers, mirroring _preseed_path: user whitelist dirs
-	# at the FRONT, Homebrew APPENDED at the back — brew's binaries must
-	# not shadow the system's (its python@3.x hid /usr/bin/python3).
-	local d
-	for d in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/go/bin" "$HOME/.npm-global/bin"; do
-		[ -d "$d" ] || continue
-		case ":$PATH:" in *":$d:"*) ;; *) export PATH="$d:$PATH" ;; esac
-	done
-	for d in /home/linuxbrew/.linuxbrew/bin /opt/homebrew/bin; do
-		[ -d "$d" ] || continue
-		path_add_pre_win "$d"
-	done
+	# Re-expose the tool locations components install to — Homebrew, cargo,
+	# go and npm — so later components find them instead of re-downloading.
+	# preseed_path (clone.sh) owns the two-tier ordering — user whitelist
+	# dirs at the FRONT, Homebrew inserted before the WSL /mnt/* section —
+	# and is idempotent, so repeated calls across components are safe.
+	preseed_path
 	return 0
 }
 
@@ -330,26 +333,10 @@ run_components() {
 # decides which profile holds every component's env blocks (all blocks
 # are dedup'd, so sourcing any one of them is complete and idempotent).
 inject_current_terminal() {
-	local shell_bin env_file
-	if [ "$(uname -s)" = "Darwin" ]; then
-		shell_bin="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $NF}')"
-	else
-		shell_bin="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"
-	fi
-	case "$shell_bin" in
-	*/zsh) env_file="$HOME/.zprofile" ;;
-	*/bash)
-		if [ -f "$HOME/.bash_profile" ]; then
-			env_file="$HOME/.bash_profile"
-		else
-			env_file="$HOME/.profile"
-		fi
-		;;
-	*)
-		warn "could not determine the login shell — no terminal injection."
-		return 0
-		;;
-	esac
+	local env_file
+	# shell_env_files always resolves to a profile (its fallback chain ends
+	# at bash), so the only guard needed is file existence.
+	env_file="$(shell_env_files | head -n1)"
 	[ -f "$env_file" ] || {
 		warn "$env_file not found — no terminal injection."
 		return 0
