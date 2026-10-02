@@ -106,9 +106,10 @@ fi
 
 # ──────────────────────── component chain ────────────────────────
 
-# Canonical --with-* projection order — outer environment first, editors
-# last. At runtime monkey-zsh and monkey-wezterm are hoisted to the front (see parse_args).
-ALL_COMPONENTS=(monkey-hyprland monkey-sway monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim)
+# Canonical --with-* projection order — kmscon (a local setup step, not a
+# downloaded component) first, then outer environment, editors last. At
+# runtime monkey-zsh and monkey-wezterm are hoisted to the front (see parse_args).
+ALL_COMPONENTS=(kmscon monkey-hyprland monkey-sway monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim)
 # Default selection when no --with-* flag is given: everything EXCEPT
 # monkey-sway (opt-in — a second Wayland desktop; installing both is fine,
 # the last install wins the shared ~/.config/waybar link). On platforms
@@ -154,8 +155,15 @@ OPTIONS
                           kmscon@ttyN and masks getty@ttyN there; the
                           bare getty stays on every other VT as the
                           last-resort console. Handled by this installer
-                          itself — not forwarded to components. Fatal on
-                          machines without systemd/KMS (e.g. containers).
+                          itself — not forwarded to components — and
+                          selected like any other --with-* entry: given
+                          alone, only the kmscon setup runs (headless
+                          console); combined with component flags it is
+                          additive and runs first. Setup failures never
+                          abort the install: unsupported environments
+                          (no systemd/KMS) are skipped with a warning. Given WITHOUT any --with-* component
+                          flag, only the kmscon setup runs — no components
+                          are installed (headless console).
   -h, --help              Show this help
 
 Run it from a pipe (note the \`-s --\`, which forwards the flags past
@@ -180,6 +188,7 @@ parse_args() {
 		--with-monkey-nvim) with+=("monkey-nvim") ;;
 		--with-monkey-vim) with+=("monkey-vim") ;;
 		--with-kmscon)
+			with+=("kmscon")
 			WITH_KMSCON=tty2
 			if [[ $# -gt 1 && "$2" != --* ]]; then
 				WITH_KMSCON=$2
@@ -241,10 +250,32 @@ parse_args() {
 
 # ──────────────────────── components ────────────────────────
 
+# The kmscon "component": a local setup step, not a downloaded repo — it
+# runs ensure_kmscon from the shared framework. Its selection semantics are
+# identical to the other --with-* entries (see parse_args); the WSL/macOS
+# guard lives here because that is where the setup would run.
+run_kmscon() {
+	if [ "$(uname -s)" != "Linux" ] || is_wsl; then
+		warn "kmscon is not applicable on WSL/macOS — skipping."
+		return 0
+	fi
+	ensure_kmscon "$WITH_KMSCON"
+}
+
 run_component() {
 	local name="$1"
-	local url="https://raw.githubusercontent.com/QMonkey/$name/master/install.sh"
 	info "──────────────── Installing ${BOLD}$name${NC}${CYAN} ────────────────"
+	if [ "$name" = kmscon ]; then
+		if run_kmscon; then
+			ok "$name set up."
+			SUCCEEDED_COMPONENTS+=("$name")
+		else
+			FAILED_COMPONENTS+=("$name")
+			warn "$name setup failed — continuing with the remaining components."
+		fi
+		return 0
+	fi
+	local url="https://raw.githubusercontent.com/QMonkey/$name/master/install.sh"
 	# Downloaded fully before executing, with retries: `curl | bash` would
 	# run a truncated script if the connection drops mid-stream (and a
 	# retry could then re-run the partial script from the top). The file
@@ -280,7 +311,7 @@ run_component() {
 	done
 	for d in /home/linuxbrew/.linuxbrew/bin /opt/homebrew/bin; do
 		[ -d "$d" ] || continue
-		case ":$PATH:" in *":$d:"*) ;; *) export PATH="$PATH:$d" ;; esac
+		path_add_pre_win "$d"
 	done
 	return 0
 }
@@ -380,17 +411,6 @@ main() {
 	echo ""
 
 	setup_sudo
-
-	# kmscon is this installer's own concern — the components never see
-	# the flag (see usage). Non-Linux/WSL has no usable VT/console stack.
-	if [ -n "$WITH_KMSCON" ]; then
-		if [ "$(uname -s)" != "Linux" ] || is_wsl; then
-			warn "kmscon is not applicable on WSL/macOS — skipping."
-		else
-			ensure_kmscon "$WITH_KMSCON" || warn "kmscon setup failed — continuing without it."
-			echo ""
-		fi
-	fi
 
 	run_components
 
