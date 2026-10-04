@@ -296,8 +296,12 @@ run_component() {
 	# also keeps stdin clean — the component gets /dev/null, the same as
 	# its own curl|bash bootstrap hands its inner installer, so nothing
 	# consumes this script's own piped source.
+	# fetch_url_or_clone falls back to a shallow clone of the component
+	# repository when the CDN is unreachable: raw.githubusercontent.com
+	# went down for minutes at a time while github.com git endpoints still
+	# responded — every component whose installer lived behind that CDN was lost to the failure.
 	local installer="/tmp/${name}_install.$$.sh"
-	if retry -s "$name installer download" curl -fsSL "$url" -o "$installer"; then
+	if fetch_url_or_clone "$url" "https://github.com/QMonkey/$name.git" "$installer" "$name installer"; then
 		if bash "$installer" </dev/null; then
 			ok "$name installed."
 			SUCCEEDED_COMPONENTS+=("$name")
