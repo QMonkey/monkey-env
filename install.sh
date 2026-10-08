@@ -264,23 +264,15 @@ parse_args() {
 
 # ──────────────────────── components ────────────────────────
 
-# The kmscon "component": a local setup step, not a downloaded repo — it
+# The kmscon "component" is a local setup step, not a downloaded repo — it
 # runs ensure_kmscon from the shared framework. Its selection semantics are
-# identical to the other --with-* entries (see parse_args); the WSL/macOS
-# guard lives here because that is where the setup would run.
-run_kmscon() {
-	if [ "$(uname -s)" != "Linux" ] || is_wsl; then
-		warn "kmscon is not applicable on WSL/macOS — skipping."
-		return 0
-	fi
-	ensure_kmscon "$WITH_KMSCON"
-}
-
+# identical to the other --with-* entries (see parse_args); the non-Linux /
+# WSL / no-KMS guards live in ensure_kmscon itself (warn + skip = success).
 run_component() {
 	local name="$1"
 	info "──────────────── Installing ${BOLD}$name${NC}${CYAN} ────────────────"
 	if [ "$name" = kmscon ]; then
-		if run_kmscon; then
+		if ensure_kmscon "$WITH_KMSCON"; then
 			ok "$name set up."
 			SUCCEEDED_COMPONENTS+=("$name")
 		else
