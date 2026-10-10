@@ -45,7 +45,7 @@ set -euo pipefail
 
 # ──────────────────────── repository identity ────────────────────────
 # Declared before the framework is sourced: the bootstrap below needs
-# both values, and clones into the very directory clone_monkey_project
+# both values, and clones into the very directory clone_project
 # would have used — one clone per run, not two.
 PROJECT=monkey-env
 PROJECT_REPO=https://github.com/QMonkey/monkey-env.git
@@ -72,7 +72,7 @@ if [ ! -f "$_monkey_scripts/install.sh" ]; then
 	else
 		# curl|bash or a .git-less directory: the only path to a
 		# same-revision scripts/ is the INSTALL_DIR checkout.
-		# clone_monkey_project cannot do this job — it lives in the very
+		# clone_project cannot do this job — it lives in the very
 		# scripts/ being fetched. INSTALL_DIR is where the framework's clone
 		# step would have put the checkout too, so that step only confirms it.
 		if [ -d "$INSTALL_DIR/.git" ]; then
@@ -308,10 +308,10 @@ run_component() {
 	fi
 	# Re-expose the tool locations components install to — Homebrew, cargo,
 	# go and npm — so later components find them instead of re-downloading.
-	# preseed_path (clone.sh) owns the two-tier ordering — user whitelist
+	# export_path (lib/env.sh) owns the two-tier ordering — user whitelist
 	# dirs at the FRONT, Homebrew inserted before the WSL /mnt/* section —
 	# and is idempotent, so repeated calls across components are safe.
-	preseed_path
+	export_path
 	return 0
 }
 
