@@ -6,12 +6,13 @@ set -euo pipefail
 #
 # Chains the monkey-* component installers in dependency order:
 #   monkey-zsh -> monkey-wezterm -> monkey-hyprland -> monkey-sway ->
-#   monkey-tmux -> monkey-nvim -> monkey-vim
+#   monkey-tmux -> monkey-nvim -> monkey-vim -> monkey-agent
 #   (runtime order: monkey-zsh and monkey-wezterm are hoisted to the
 #   front — zsh's chsh must precede the later stages so their env blocks
 #   land in ~/.zprofile; wezterm precedes the compositors because both
 #   checkhealth scripts treat it as their default terminal and would
 #   otherwise install it themselves, bypassing this component's source build.
+#   monkey-agent runs last — it is tooling on top of every other component.
 #   monkey-sway is opt-in: --with-monkey-sway.
 #   Default installs everything else, including monkey-hyprland — except
 #   on WSL/macOS, where the default drops monkey-hyprland as well;
@@ -123,13 +124,15 @@ fi
 # Canonical --with-* projection order — kmscon (a local setup step, not a
 # downloaded component) first, then outer environment, editors last. At
 # runtime monkey-zsh and monkey-wezterm are hoisted to the front (see parse_args).
-ALL_COMPONENTS=(kmscon monkey-hyprland monkey-sway monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim)
+ALL_COMPONENTS=(kmscon monkey-hyprland monkey-sway monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim monkey-agent)
 # Default selection when no --with-* flag is given: everything EXCEPT
 # monkey-sway (opt-in — a second Wayland desktop; installing both is fine,
 # the last install wins the shared ~/.config/waybar link). On platforms
 # where a Wayland desktop config is not applicable (WSL, macOS) the default
-# also drops monkey-hyprland — see parse_args.
-DEFAULT_COMPONENTS=(monkey-hyprland monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim)
+# also drops monkey-hyprland — see parse_args. monkey-agent is default-on
+# (plain shell tooling, applicable everywhere); --with-monkey-agent exists
+# for explicitness only — selecting it is a no-op relative to the default.
+DEFAULT_COMPONENTS=(monkey-hyprland monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim monkey-agent)
 
 COMPONENTS=()
 SUCCEEDED_COMPONENTS=()
@@ -144,9 +147,10 @@ Usage: $0 [OPTIONS]
 
 One-shot meta-installer for the monkey-* family. Installs the component
 configs in dependency order: wezterm -> hyprland -> sway -> tmux -> nvim ->
-vim (monkey-zsh runs first so its login-shell switch precedes the other
-components' profile writes; wezterm precedes the compositors because both
-treat it as their default terminal; monkey-sway is opt-in).
+vim -> agent (monkey-zsh runs first so its login-shell switch precedes the
+other components' profile writes; wezterm precedes the compositors because
+both treat it as their default terminal; monkey-sway is opt-in; monkey-agent
+runs last — it is tooling layered on top of the other components).
 
 OPTIONS
   --with-monkey-hyprland  Include the Hyprland desktop config
@@ -156,9 +160,11 @@ OPTIONS
   --with-monkey-zsh       Include the zsh config
   --with-monkey-nvim      Include the nvim config
   --with-monkey-vim       Include the vim config
+  --with-monkey-agent     Include the monkey-agent tooling (default on —
+                          this flag exists for explicitness only)
                           Multiple --with-* flags combine; the install order
                           is always zsh first, then wezterm -> hyprland ->
-                          sway -> tmux -> nvim -> vim. Without any
+                          sway -> tmux -> nvim -> vim -> agent. Without any
                           --with-* flag, everything installs EXCEPT
                           monkey-sway — and on WSL/macOS also EXCEPT
                           monkey-hyprland (pass --with-monkey-hyprland to
@@ -201,6 +207,7 @@ parse_args() {
 		--with-monkey-zsh) with+=("monkey-zsh") ;;
 		--with-monkey-nvim) with+=("monkey-nvim") ;;
 		--with-monkey-vim) with+=("monkey-vim") ;;
+		--with-monkey-agent) with+=("monkey-agent") ;;
 		--with-kmscon)
 			with+=("kmscon")
 			WITH_KMSCON=tty2
