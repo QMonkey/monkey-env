@@ -3,7 +3,7 @@
 One-shot meta-installer for the monkey-* family. Chains the component installers in dependency order with a single password entry:
 
 ```text
-monkey-zsh -> monkey-wezterm -> monkey-hyprland -> monkey-sway -> monkey-tmux -> monkey-nvim -> monkey-vim
+monkey-zsh -> monkey-wezterm -> monkey-hyprland -> monkey-sway -> monkey-tmux -> monkey-nvim -> monkey-vim -> monkey-agent
 ```
 
 monkey-zsh runs first on purpose: it switches the login shell to zsh before anything else, so the env blocks the later components persist land in `~/.zprofile` (which zsh reads) instead of `.profile`.
@@ -15,7 +15,7 @@ monkey-wezterm runs before the compositors on purpose: both monkey-hyprland and 
 Default — install everything **except monkey-sway** (which is opt-in via `--with-monkey-sway`). On **WSL or macOS** the default also drops monkey-hyprland — a Wayland desktop config is not applicable there (WSLg already renders single GUI apps; WSL has no VT login, so the guarded autostart block would stay inert). Pass `--with-monkey-hyprland` to install it anyway:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash 2>&1 | tee monkey-env-install.log
 ```
 
 > The one-liner needs `git` besides `curl` itself: the installer clones this repository into `~/Documents/monkey-env`, and every component installer it chains is fetched with `curl` and clones its own repo too — so `git` is required no matter how you run the installer. If `git` is missing, the script stops with an error — install it with your system's package manager and re-run the same command.
@@ -25,13 +25,13 @@ Vim-style selection — only the components you ask for (order is always normali
 Installing both desktops appends two guarded autostart blocks to your shell rc — the first one in the file (monkey-hyprland's) wins on tty1; remove the other marker's lines to switch.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash -s -- --with-monkey-tmux --with-monkey-zsh
+curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash -s -- --with-monkey-tmux --with-monkey-zsh 2>&1 | tee monkey-env-install.log
 ```
 
 Full install — every component, including the two opt-ins monkey-hyprland and monkey-sway, plus the kmscon console upgrade (`--with-kmscon`, default `tty2`; on WSL/macOS it is skipped with a warning). `2>&1 | tee` dumps the whole output (stdout and stderr) to `monkey-env-install.log` in the current directory while still printing it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash -s -- --with-kmscon --with-monkey-hyprland --with-monkey-sway --with-monkey-wezterm --with-monkey-tmux --with-monkey-zsh --with-monkey-nvim --with-monkey-vim 2>&1 | tee monkey-env-install.log
+curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash -s -- --with-kmscon --with-monkey-hyprland --with-monkey-sway --with-monkey-wezterm --with-monkey-tmux --with-monkey-zsh --with-monkey-nvim --with-monkey-vim --with-monkey-agent 2>&1 | tee monkey-env-install.log
 ```
 
 From a local clone:
@@ -86,15 +86,16 @@ All component installers are idempotent: re-runs update instead of reinstall, an
 
 ## Components
 
-| Component                                                     | Provides                                                       |
-| ------------------------------------------------------------- | -------------------------------------------------------------- |
-| [monkey-hyprland](https://github.com/QMonkey/monkey-hyprland) | Hyprland desktop config (Lua `hl` API) + waybar                |
-| [monkey-sway](https://github.com/QMonkey/monkey-sway)         | sway desktop config + waybar (opt-in via `--with-monkey-sway`) |
-| [monkey-wezterm](https://github.com/QMonkey/monkey-wezterm)   | WezTerm terminal config (built from source)                    |
-| [monkey-tmux](https://github.com/QMonkey/monkey-tmux)         | tmux config, TPM + plugins, fzf, auto-start on shell login     |
-| [monkey-zsh](https://github.com/QMonkey/monkey-zsh)           | zsh config, zinit, fzf/zoxide/eza/go, login-shell switch       |
-| [monkey-nvim](https://github.com/QMonkey/monkey-nvim)         | Neovim config (built from source) + LSP servers                |
-| [monkey-vim](https://github.com/QMonkey/monkey-vim)           | Vim config (built from source) + LSP servers                   |
+| Component                                                     | Provides                                                                                                                                           |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [monkey-hyprland](https://github.com/QMonkey/monkey-hyprland) | Hyprland desktop config (Lua `hl` API) + waybar                                                                                                    |
+| [monkey-sway](https://github.com/QMonkey/monkey-sway)         | sway desktop config + waybar (opt-in via `--with-monkey-sway`)                                                                                     |
+| [monkey-wezterm](https://github.com/QMonkey/monkey-wezterm)   | WezTerm terminal config (built from source)                                                                                                        |
+| [monkey-tmux](https://github.com/QMonkey/monkey-tmux)         | tmux config, TPM + plugins, fzf, auto-start on shell login                                                                                         |
+| [monkey-zsh](https://github.com/QMonkey/monkey-zsh)           | zsh config, zinit, fzf/zoxide/eza/go, login-shell switch                                                                                           |
+| [monkey-nvim](https://github.com/QMonkey/monkey-nvim)         | Neovim config (built from source) + LSP servers                                                                                                    |
+| [monkey-vim](https://github.com/QMonkey/monkey-vim)           | Vim config (built from source) + LSP servers                                                                                                       |
+| [monkey-agent](https://github.com/QMonkey/monkey-agent)       | AI agent workstation: OpenCode, DSH, Qwen Code, OpenClaw — configs rendered from templates, resident services, credentials in one 0600 secrets.env |
 
 ## Requirements
 
