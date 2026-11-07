@@ -379,6 +379,12 @@ print_summary() {
 main() {
 	parse_args "$@"
 
+	# install_main is what normally sets the framework's $OS; this flow does
+	# not call it, so the id has to be established here or every consumer of
+	# it (pkg_manager's lane chain, the distro name tables, Homebrew's PATH
+	# placement) silently falls back to "unknown" on macOS and WSL alike.
+	OS=$(os_detect)
+
 	# TIOCSTI injection right: components inherit this and skip their own
 	# injection — this chain injects ONCE, here, after everything exits.
 	export ACQUIRE_TIOCSTI="${ACQUIRE_TIOCSTI:-monkey-env}"
