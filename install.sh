@@ -20,7 +20,8 @@ set -euo pipefail
 #
 # kmscon is not a component but a local SYSTEM-LEVEL setup step (install
 # the package, write the unit/PAM bits, enable kmscon@ttyN and mask
-# getty@ttyN) selected with --with-kmscon [tty[,tty...]]. It always runs
+# getty@ttyN — masking only up to tty6, the range where a default getty
+# exists at all) selected with --with-kmscon [tty[,tty...]]. It always runs
 # FIRST — before any component: it depends on nothing but sudo (granted
 # by setup_sudo) and the package manager, no component depends on it, and
 # running it before the user-config steps means a VT takeover is already
@@ -65,8 +66,8 @@ if [ ! -f "$_monkey_scripts/install.sh" ]; then
 		# Outdated checkout: update it in place and keep running from it.
 		git -C "$_monkey_dir" pull --ff-only || true
 		if [ ! -f "$_monkey_dir/scripts/install.sh" ]; then
-			echo "monkey-scripts missing from $_monkey_dir (no scripts/ subtree)." >&2
-			echo "  git -C $_monkey_dir pull    # outdated checkout — or the repo never added the subtree" >&2
+			printf '%s\n' "monkey-scripts missing from $_monkey_dir (no scripts/ subtree)." >&2
+			printf '%s\n' "  git -C $_monkey_dir pull    # outdated checkout — or the repo never added the subtree" >&2
 			exit 1
 		fi
 		_monkey_scripts="$_monkey_dir/scripts"
@@ -77,23 +78,22 @@ if [ ! -f "$_monkey_scripts/install.sh" ]; then
 		# scripts/ being fetched. INSTALL_DIR is where the framework's clone
 		# step would have put the checkout too, so that step only confirms it.
 		if [ -d "$INSTALL_DIR/.git" ]; then
-			# An install already lives here: update it, then run that one.
 			git -C "$INSTALL_DIR" pull --ff-only || true
 		elif [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR")" ]; then
 			# git clone would refuse too, so say why in our own words.
-			echo "$INSTALL_DIR is not empty and is not a git clone." >&2
-			echo "  move it aside, delete it, or set INSTALL_DIR elsewhere." >&2
+			printf '%s\n' "$INSTALL_DIR is not empty and is not a git clone." >&2
+			printf '%s\n' "  move it aside, delete it, or set INSTALL_DIR elsewhere." >&2
 			exit 1
 		else
 			# Fresh clone — the ONLY sub-branch where git is hard-required:
 			# the pull sub-branch above degrades gracefully without it, and
 			# a zip/tarball must not fail here just for a missing git.
 			if ! command -v git >/dev/null 2>&1; then
-				echo "git is required to clone $PROJECT — install it first (e.g. sudo apt-get install git), then re-run." >&2
+				printf '%s\n' "git is required to clone $PROJECT — install it first (e.g. sudo apt-get install git), then re-run." >&2
 				exit 1
 			fi
 			# No retry() available yet — the framework loads only after this
-			# clone succeeds — so inline the standard 3 attempts. A failed
+			# clone succeeds — so inline a bounded retry loop by hand. A failed
 			# clone leaves a partial directory behind; remove it so the next
 			# attempt cannot trip over "already exists". This branch only
 			# runs on a fresh install (INSTALL_DIR did not exist or was
@@ -218,7 +218,7 @@ parse_args() {
 			;;
 		-h | --help) usage ;;
 		*)
-			echo "Unknown option: $1"
+			printf '%s\n' "Unknown option: $1"
 			usage
 			;;
 		esac
@@ -236,12 +236,11 @@ parse_args() {
 			done
 		done
 	else
-		# Default: everything EXCEPT monkey-sway (opt-in). On WSL or macOS
-		# a Wayland desktop config is not applicable (WSL has no VT login —
-		# XDG_VTNR is never set, so the guarded autostart block stays
-		# inert; WSLg already renders single GUI apps) — drop hyprland
-		# from the default too. An explicit --with-monkey-hyprland still
-		# installs it.
+		# On WSL or a non-Linux host a Wayland desktop config is not
+		# applicable — WSL logins are ptys, so the autostart block's
+		# /dev/ttyN guard never matches (and WSLg already renders single
+		# GUI apps) — drop hyprland from the default too. An explicit
+		# --with-monkey-hyprland still installs it.
 		COMPONENTS=("${DEFAULT_COMPONENTS[@]}")
 		if [ "$(uname -s)" != "Linux" ] || is_wsl; then
 			local rest_default=() c3
@@ -274,7 +273,8 @@ parse_args() {
 # The kmscon "component" is a local setup step, not a downloaded repo — it
 # runs ensure_kmscon from the shared framework. Its selection semantics are
 # identical to the other --with-* entries (see parse_args); the non-Linux /
-# WSL / no-KMS guards live in ensure_kmscon itself (warn + skip = success).
+# WSL / no-systemd / no-KMS guards live in ensure_kmscon itself
+# (warn + skip = success).
 run_component() {
 	local name="$1"
 	info "──────────────── Installing ${BOLD}$name${NC}${CYAN} ────────────────"
@@ -316,8 +316,9 @@ run_component() {
 	# Re-expose the tool locations components install to — Homebrew, cargo,
 	# go and npm — so later components find them instead of re-downloading.
 	# export_path (lib/env.sh) owns the two-tier ordering — user whitelist
-	# dirs at the FRONT, Homebrew inserted before the WSL /mnt/* section —
-	# and is idempotent, so repeated calls across components are safe.
+	# dirs at the FRONT, Homebrew prepended on macOS and positionally
+	# inserted (ahead of the WSL /mnt/* shims only) on Linux — and is
+	# idempotent, so repeated calls across components are safe.
 	export_path
 	return 0
 }
@@ -325,7 +326,7 @@ run_component() {
 run_components() {
 	local c
 	for c in "${COMPONENTS[@]}"; do
-		echo ""
+		printf '\n'
 		run_component "$c"
 	done
 }
@@ -352,22 +353,22 @@ inject_current_terminal() {
 }
 
 print_summary() {
-	echo ""
+	printf '\n'
 	if [[ ${#FAILED_COMPONENTS[@]} -eq 0 ]]; then
-		echo -e "${GREEN}${BOLD}All components installed successfully.${NC}"
-		echo ""
-		echo -e "  Start a new shell to pick up the PATH changes (${CYAN}exec zsh${NC} or reopen the terminal),"
-		echo -e "  then run each component's ${CYAN}checkhealth.sh${NC} for a per-component report."
+		printf '%s\n' "${GREEN}${BOLD}All components installed successfully.${NC}"
+		printf '\n'
+		printf '%s\n' "  Start a new shell to pick up the PATH changes (${CYAN}exec zsh${NC} or reopen the terminal),"
+		printf '%s\n' "  then run each component's ${CYAN}checkhealth.sh${NC} for a per-component report."
 		exit 0
 	fi
 	if [[ ${#SUCCEEDED_COMPONENTS[@]} -gt 0 ]]; then
-		echo -e "${GREEN}Installed successfully:${NC} ${SUCCEEDED_COMPONENTS[*]}"
+		printf '%s\n' "${GREEN}Installed successfully:${NC} ${SUCCEEDED_COMPONENTS[*]}"
 	fi
-	echo -e "${RED}${BOLD}Failed: ${FAILED_COMPONENTS[*]}${NC}"
-	echo -e "Re-run the installer (it is idempotent) or install the failed ones individually:"
+	printf '%s\n' "${RED}${BOLD}Failed: ${FAILED_COMPONENTS[*]}${NC}"
+	printf '%s\n' "Re-run the installer (it is idempotent) or install the failed ones individually:"
 	local c
 	for c in "${FAILED_COMPONENTS[@]}"; do
-		echo -e "  ${CYAN}curl -fsSL https://raw.githubusercontent.com/QMonkey/$c/master/install.sh | bash${NC}"
+		printf '%s\n' "  ${CYAN}curl -fsSL https://raw.githubusercontent.com/QMonkey/$c/master/install.sh | bash${NC}"
 	done
 	exit 1
 }
@@ -379,11 +380,12 @@ print_summary() {
 main() {
 	parse_args "$@"
 
-	# install_main is what normally sets the framework's $OS; this flow does
-	# not call it, so the id has to be established here or every consumer of
-	# it (pkg_manager's lane chain, the distro name tables, Homebrew's PATH
-	# placement) silently falls back to "unknown" on macOS and WSL alike.
-	OS=$(os_detect)
+	# install_main is what normally establishes the framework's $OS; this
+	# flow does not call it, so os_init runs here instead — the same gate,
+	# the same export, and the same hard stop on a host with no package
+	# tables (pkg_manager's lane chain, the distro name tables and Homebrew's
+	# PATH placement all read $OS).
+	os_init
 
 	# TIOCSTI injection right: components inherit this and skip their own
 	# injection — this chain injects ONCE, here, after everything exits.
@@ -400,11 +402,11 @@ main() {
 
 	print_banner "${PROJECT} installer"
 	local c
-	echo -e "${BOLD}Components (in install order)${NC}"
+	printf '%s\n' "${BOLD}Components (in install order)${NC}"
 	for c in "${COMPONENTS[@]}"; do
-		echo -e "  ${CYAN}$c${NC}"
+		printf '%s\n' "  ${CYAN}$c${NC}"
 	done
-	echo ""
+	printf '\n'
 
 	setup_sudo
 
