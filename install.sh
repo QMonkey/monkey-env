@@ -30,7 +30,7 @@ set -euo pipefail
 # setup runs (headless console).
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash 2>&1 | tee monkey-env-install.log
 #   bash install.sh [OPTIONS]
 #
 # NOTE: `bash --with-monkey-tmux` does NOT work — bash would parse it as
@@ -126,9 +126,10 @@ fi
 # runtime monkey-zsh and monkey-wezterm are hoisted to the front (see parse_args).
 ALL_COMPONENTS=(kmscon monkey-hyprland monkey-sway monkey-wezterm monkey-tmux monkey-zsh monkey-nvim monkey-vim monkey-agent)
 # Default selection when no --with-* flag is given: everything EXCEPT
-# monkey-sway (opt-in — a second Wayland desktop; installing both is fine,
-# the last install wins the shared ~/.config/waybar link). On platforms
-# where a Wayland desktop config is not applicable (WSL, macOS) the default
+# monkey-sway (opt-in — a second Wayland desktop; installing both is fine, each
+# desktop reads its own waybar dir: ~/.config/hypr/waybar and
+# ~/.config/sway/waybar). On platforms where a Wayland desktop config is not
+# applicable (WSL, macOS) the default
 # also drops monkey-hyprland — see parse_args. monkey-agent is default-on
 # (plain shell tooling, applicable everywhere); --with-monkey-agent exists
 # for explicitness only — selecting it is a no-op relative to the default.
@@ -147,9 +148,9 @@ Usage: $0 [OPTIONS]
 
 One-shot meta-installer for the monkey-* family. Installs the component
 configs in dependency order: wezterm -> hyprland -> sway -> tmux -> nvim ->
-vim -> agent (monkey-zsh runs first so its login-shell switch precedes the
+vim -> agent (zsh runs first so its login-shell switch precedes the
 other components' profile writes; wezterm precedes the compositors because
-both treat it as their default terminal; monkey-sway is opt-in; monkey-agent
+both treat it as their default terminal; sway is opt-in; the agent tooling
 runs last — it is tooling layered on top of the other components).
 
 OPTIONS
@@ -189,7 +190,7 @@ OPTIONS
 Run it from a pipe (note the \`-s --\`, which forwards the flags past
 bash's own option parsing):
 
-  curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash -s -- --with-monkey-tmux --with-monkey-zsh
+  curl -fsSL https://raw.githubusercontent.com/QMonkey/monkey-env/master/install.sh | bash -s -- --with-monkey-tmux --with-monkey-zsh 2>&1 | tee monkey-env-install.log
 
 Exit code: 1 if any component failed, 0 otherwise.
 EOF
@@ -368,7 +369,7 @@ print_summary() {
 	printf '%s\n' "Re-run the installer (it is idempotent) or install the failed ones individually:"
 	local c
 	for c in "${FAILED_COMPONENTS[@]}"; do
-		printf '%s\n' "  ${CYAN}curl -fsSL https://raw.githubusercontent.com/QMonkey/$c/master/install.sh | bash${NC}"
+		printf '%s\n' "  ${CYAN}curl -fsSL https://raw.githubusercontent.com/QMonkey/$c/master/install.sh | bash 2>&1 | tee $c-install.log${NC}"
 	done
 	exit 1
 }
