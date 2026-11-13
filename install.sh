@@ -338,7 +338,7 @@ run_components() {
 # decides which profile holds every component's env blocks (all blocks
 # are dedup'd, so sourcing any one of them is complete and idempotent).
 inject_current_terminal() {
-	local env_file
+	local env_file xdg_fix
 	# shell_env_files always resolves to a profile (its fallback chain ends
 	# at bash), so the only guard needed is file existence.
 	env_file="$(shell_env_files | head -n1)"
@@ -346,7 +346,25 @@ inject_current_terminal() {
 		warn "$env_file not found — no terminal injection."
 		return 0
 	}
-	if [ "$ACQUIRE_TIOCSTI" = "monkey-env" ] && inject_tty "source ${env_file}"; then
+	if [ "$ACQUIRE_TIOCSTI" != "monkey-env" ]; then
+		warn "could not inject into the current terminal — run: source ${env_file}"
+		return 0
+	fi
+	# XDG_RUNTIME_DIR last mile (rationale in xdg_runtime_fix_cmd): the
+	# components never reach their own copy of this — finish_install keeps the
+	# export behind the ACQUIRE_TIOCSTI gate, and this wrapper holds that right
+	# — so the chain's only export site is here. Queued BEFORE the source line
+	# for the reason output.sh gives: tmux started from this shell must inherit
+	# it. An empty fix logs nothing: silence is the healthy-path signal.
+	xdg_fix="$(xdg_runtime_fix_cmd)"
+	if [ -n "$xdg_fix" ]; then
+		if inject_tty "$xdg_fix"; then
+			ok "injected the XDG_RUNTIME_DIR fix into the current terminal."
+		else
+			printf '%s\n' "  ${CYAN}${xdg_fix}${NC}"
+		fi
+	fi
+	if inject_tty "source ${env_file}"; then
 		ok "injected 'source ${env_file}' into the current terminal."
 	else
 		warn "could not inject into the current terminal — run: source ${env_file}"
