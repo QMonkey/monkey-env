@@ -84,7 +84,7 @@ fixes it.
 
 All component installers are idempotent: re-runs update instead of reinstall, and running several `--with-*` combinations never duplicates work.
 
-Exit status: 0 when every selected component succeeded, 1 when any of them failed — the summary lists the failures with per-component retry commands. A missing prerequisite aborts earlier with the same 1: an unsupported OS, or `git`/`curl` absent. An option this installer does not recognise is **not** an error — it prints the usage and exits 0 having installed nothing, so check the component list in the output, not just the exit code.
+Exit status: 0 when every selected component succeeded, 1 when any of them failed — the summary lists the failures with per-component retry commands. An unsupported OS aborts at the very start with the same 1. Missing `git`/`curl` are not an immediate abort: the chain's own dependency pass installs them first and exits 1 only when that fails. An option this installer does not recognise is **not** an error — it prints the usage and exits 0 having installed nothing, so check the component list in the output, not just the exit code.
 
 ## Components
 
@@ -102,6 +102,6 @@ Exit status: 0 when every selected component succeeded, 1 when any of them faile
 ## Requirements
 
 - One of the supported OS ids (Debian, Ubuntu, Arch, openSUSE, CentOS/RHEL/Rocky/AlmaLinux/Oracle Linux, Fedora) or macOS — derivatives are normalised to their parent id first (Linux Mint/Pop!_OS/elementary/Zorin → Ubuntu, Manjaro/EndeavourOS → Arch, openSUSE Leap/MicroOS/SLES → openSUSE). Anything outside that list is refused at the very start, before the first package question — there is no best-effort mode to fall through to
-- `git` and `curl` on PATH — both are hard prerequisites of the chain (the installer checks them before it prints the component list, because every component is fetched with `curl` and clones its own repo with `git`)
+- `git` and `curl` — hard prerequisites of the chain, because every component is fetched with `curl` and clones its own repo with `git`. They are this repo's own required checks, so the dependency pass installs them when missing and stops with exit 1 only if it cannot; that pass runs just after the component list is printed
 - Network access to github.com and raw.githubusercontent.com (component installers are fetched at run time; the CDN has a `git clone` fallback)
 - Overridable environment: `INSTALL_DIR` — where the bootstrap clone of this repo lands (default `~/Documents/monkey-env`); `SUDO_DROPIN=0` — skip the temporary NOPASSWD drop-in and ride the `sudo` timestamp instead, which costs one re-prompt when it expires mid-run; `SUDOERS_D_DIR` — where that drop-in is written (default `/etc/sudoers.d`)
