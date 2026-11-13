@@ -41,8 +41,10 @@ set -euo pipefail
 # live in scripts/ — a `git subtree` of github.com/QMonkey/monkey-scripts.
 # On the curl|bash path there is no checkout at all, so install.sh clones
 # THIS repo and runs the copy of install.sh inside it — that copy carries
-# its own scripts/, so both come from the same revision. The component
-# chain itself is this file's own main().
+# its own scripts/, so both come from the same revision. The chain runs as
+# install_main's tool step; the banner, the dependency pass, the completion
+# report and the terminal injection are the framework's, exactly as in any
+# component installer.
 # ──────────────────────────────────────────────────────────────
 
 # ──────────────────────── repository identity ────────────────────────
@@ -138,7 +140,6 @@ DEFAULT_COMPONENTS=(monkey-hyprland monkey-wezterm monkey-tmux monkey-zsh monkey
 COMPONENTS=()
 SUCCEEDED_COMPONENTS=()
 FAILED_COMPONENTS=()
-WITH_KMSCON=""
 
 # ──────────────────────── selection ────────────────────────
 
@@ -198,7 +199,15 @@ EOF
 }
 
 parse_args() {
+	# --with-kmscon belongs to the framework's parser: its arm is the very same
+	# "default tty2, swallow one non-flag value" rule this file used to carry
+	# twice. Whatever it leaves in _INSTALL_ARGS is this file's own selection.
+	parse_install_args "$@"
+	set -- ${_INSTALL_ARGS[@]+"${_INSTALL_ARGS[@]}"}
 	local with=() c w
+	if [ -n "$KMSCON_TTYS" ]; then
+		with+=("kmscon")
+	fi
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--with-monkey-hyprland) with+=("monkey-hyprland") ;;
@@ -209,14 +218,6 @@ parse_args() {
 		--with-monkey-nvim) with+=("monkey-nvim") ;;
 		--with-monkey-vim) with+=("monkey-vim") ;;
 		--with-monkey-agent) with+=("monkey-agent") ;;
-		--with-kmscon)
-			with+=("kmscon")
-			WITH_KMSCON=tty2
-			if [[ $# -gt 1 && "$2" != --* ]]; then
-				WITH_KMSCON=$2
-				shift
-			fi
-			;;
 		-h | --help) usage ;;
 		*)
 			printf '%s\n' "Unknown option: $1"
@@ -272,15 +273,15 @@ parse_args() {
 # ──────────────────────── components ────────────────────────
 
 # The kmscon "component" is a local setup step, not a downloaded repo — it
-# runs ensure_kmscon from the shared framework. Its selection semantics are
-# identical to the other --with-* entries (see parse_args); the non-Linux /
-# WSL / no-systemd / no-KMS guards live in ensure_kmscon itself
-# (warn + skip = success).
+# runs ensure_kmscon from the shared framework, on the tty list the
+# framework's own parser filled. Its selection semantics are identical to the
+# other --with-* entries (see parse_args); the non-Linux / WSL / no-systemd /
+# no-KMS guards live in ensure_kmscon itself (warn + skip = success).
 run_component() {
 	local name="$1"
 	info "──────────────── Installing ${BOLD}$name${NC}${CYAN} ────────────────"
 	if [ "$name" = kmscon ]; then
-		if ensure_kmscon "$WITH_KMSCON"; then
+		if ensure_kmscon "$KMSCON_TTYS"; then
 			ok "$name set up."
 			SUCCEEDED_COMPONENTS+=("$name")
 		else
@@ -332,108 +333,79 @@ run_components() {
 	done
 }
 
-# ────────────────── current-terminal activation ──────────────────
-# Components skipped their own injection (ACQUIRE_TIOCSTI protocol) —
-# inject once here, after the whole chain has finished. The login shell
-# decides which profile holds every component's env blocks (all blocks
-# are dedup'd, so sourcing any one of them is complete and idempotent).
-inject_current_terminal() {
-	local env_file xdg_fix
-	# shell_env_files always resolves to a profile (its fallback chain ends
-	# at bash), so the only guard needed is file existence.
-	env_file="$(shell_env_files | head -n1)"
-	[ -f "$env_file" ] || {
-		warn "$env_file not found — no terminal injection."
-		return 0
-	}
-	if [ "$ACQUIRE_TIOCSTI" != "monkey-env" ]; then
-		warn "could not inject into the current terminal — run: source ${env_file}"
-		return 0
-	fi
-	# XDG_RUNTIME_DIR last mile (rationale in xdg_runtime_fix_cmd): the
-	# components never reach their own copy of this — finish_install keeps the
-	# export behind the ACQUIRE_TIOCSTI gate, and this wrapper holds that right
-	# — so the chain's only export site is here. Queued BEFORE the source line
-	# for the reason output.sh gives: tmux started from this shell must inherit
-	# it. An empty fix logs nothing: silence is the healthy-path signal.
-	xdg_fix="$(xdg_runtime_fix_cmd)"
-	if [ -n "$xdg_fix" ]; then
-		if inject_tty "$xdg_fix"; then
-			ok "injected the XDG_RUNTIME_DIR fix into the current terminal."
-		else
-			printf '%s\n' "  ${CYAN}${xdg_fix}${NC}"
-		fi
-	fi
-	if inject_tty "source ${env_file}"; then
-		ok "injected 'source ${env_file}' into the current terminal."
-	else
-		warn "could not inject into the current terminal — run: source ${env_file}"
-	fi
-}
-
-print_summary() {
-	printf '\n'
+# The chain holds the TIOCSTI right (ACQUIRE_TIOCSTI below equals PROJECT), so
+# finish_install — not any component — performs the single end-of-run
+# injection: the XDG_RUNTIME_DIR fix first, then `source <profile>`. That is
+# the same code path a component uses when installed alone, so the chain can
+# no longer drift from it.
+queue_chain_verdict() {
+	local c
 	if [[ ${#FAILED_COMPONENTS[@]} -eq 0 ]]; then
-		printf '%s\n' "${GREEN}${BOLD}All components installed successfully.${NC}"
-		printf '\n'
-		printf '%s\n' "  Start a new shell to pick up the PATH changes (${CYAN}exec zsh${NC} or reopen the terminal),"
-		printf '%s\n' "  then run each component's ${CYAN}checkhealth.sh${NC} for a per-component report."
-		exit 0
+		SUMMARY_LINES+=("${GREEN}${BOLD}All components installed successfully.${NC}")
+		return 0
 	fi
 	if [[ ${#SUCCEEDED_COMPONENTS[@]} -gt 0 ]]; then
-		printf '%s\n' "${GREEN}Installed successfully:${NC} ${SUCCEEDED_COMPONENTS[*]}"
+		SUMMARY_LINES+=("${GREEN}Installed successfully:${NC} ${SUCCEEDED_COMPONENTS[*]}")
 	fi
-	printf '%s\n' "${RED}${BOLD}Failed: ${FAILED_COMPONENTS[*]}${NC}"
-	printf '%s\n' "Re-run the installer (it is idempotent) or install the failed ones individually:"
-	local c
+	SUMMARY_LINES+=("${RED}${BOLD}Failed: ${FAILED_COMPONENTS[*]}${NC}")
+	SUMMARY_LINES+=("Re-run the installer (it is idempotent) or install the failed ones individually:")
 	for c in "${FAILED_COMPONENTS[@]}"; do
-		printf '%s\n' "  ${CYAN}curl -fsSL https://raw.githubusercontent.com/QMonkey/$c/master/install.sh | bash 2>&1 | tee $c-install.log${NC}"
+		SUMMARY_LINES+=("  ${CYAN}curl -fsSL https://raw.githubusercontent.com/QMonkey/$c/master/install.sh | bash 2>&1 | tee $c-install.log${NC}")
 	done
-	exit 1
+	return 0
 }
 
-# ──────────────────── main ────────────────────
-# Custom flow: no install_main() here — the chain, its banner section and
-# the single end-of-chain injection are this file's own.
+# ──────────────────── framework hooks ────────────────────
+# The consumer shape: identity and data above, install_main at the bottom.
+# The chain is what install_step_tool runs; the banner, the sudo grant, the
+# dependency pass, the completion report and the terminal injection all come
+# from the framework, so there is one implementation of each here and in every
+# component installer.
 
-main() {
-	parse_args "$@"
-
-	# install_main is what normally establishes the framework's $OS; this
-	# flow does not call it, so os_init runs here instead — the same gate,
-	# the same export, and the same hard stop on a host with no package
-	# tables (pkg_manager's lane chain, the distro name tables and Homebrew's
-	# PATH placement all read $OS).
-	os_init
-
-	# TIOCSTI injection right: components inherit this and skip their own
-	# injection — this chain injects ONCE, here, after everything exits.
-	export ACQUIRE_TIOCSTI="${ACQUIRE_TIOCSTI:-monkey-env}"
-
-	# Every component installer is fetched with curl and clones its own repo
-	# with git — both are hard prerequisites of the whole chain. Fail fast
-	# with an actionable message instead of letting every component's
-	# bootstrap die with a confusing per-component error.
-	have_native_cmd git ||
-		fail "git is required to clone the component repositories — install it first (e.g. sudo apt-get install git), then re-run."
-	have_native_cmd curl ||
-		fail "curl is required to fetch the component installers — install it first (e.g. sudo apt-get install curl), then re-run."
-
-	print_banner "${PROJECT} installer"
-	local c
+install_print_info() {
 	printf '%s\n' "${BOLD}Components (in install order)${NC}"
+	local c
 	for c in "${COMPONENTS[@]}"; do
 		printf '%s\n' "  ${CYAN}$c${NC}"
 	done
 	printf '\n'
-
-	setup_sudo
-
-	run_components
-
-	inject_current_terminal
-
-	print_summary
 }
 
-main "$@"
+install_step_prepare() {
+	# Every component installer is fetched with curl and clones its own repo
+	# with git, so both are hard prerequisites of the chain — and the hooks run
+	# before install_main's own dependency pass (install_main:186-193), so they
+	# have to be secured here first. "vcs" IS that pair in the framework's
+	# build-group table (git + curl; macOS ships curl), the same verb every
+	# component reaches for early — this chain borrows nothing special.
+	# ensure_git then hard-stops with the distro hint when the install could
+	# not deliver it, and the framework's pass stays the plain verification it
+	# is for every other project.
+	export ACQUIRE_TIOCSTI="${ACQUIRE_TIOCSTI:-monkey-env}"
+	install_build_deps vcs
+	ensure_git
+	have_native_cmd curl ||
+		fail "curl is required to fetch the component installers — install it first: $(get_install_hint curl)"
+}
+
+install_step_tool() {
+	run_components
+	printf '\n'
+}
+
+# Last hook before finish_install prints these lines and injects.
+install_step_after() {
+	queue_chain_verdict
+}
+
+# ──────────────────── entry ────────────────────
+# parse_args owns --with-monkey-* and delegates --with-kmscon to the
+# framework's parser (see there). install_main ends with finish_install, so
+# the verdict and the injection are already printed by the time this exit
+# runs — and it must stay an `if`: as the file's last command, a trailing
+# `[ … ] && exit 1` would itself yield status 1 on the all-good path.
+parse_args "$@"
+install_main
+if [[ ${#FAILED_COMPONENTS[@]} -gt 0 ]]; then
+	exit 1
+fi
